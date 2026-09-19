@@ -8,7 +8,14 @@
     "scheme": "fintrackmobile",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "icon": "./assets/expo.icon"
+      "icon": "./assets/expo.icon",
+      "bundleIdentifier": "com.anonymous.FinTrackMobile",
+      "infoPlist": {
+        "UIApplicationSceneManifest": {
+          "UIApplicationSupportsMultipleScenes": false,
+          "UISceneConfigurations": {}
+        }
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -32,7 +39,8 @@
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 76
         }
-      ]
+      ],
+      "expo-sqlite"
     ],
     "experiments": {
       "typedRoutes": true,

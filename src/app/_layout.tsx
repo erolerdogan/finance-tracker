@@ -1,18 +1,46 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from 'expo-router';
-import * as SplashScreen from 'expo-splash-screen';
-import { useColorScheme } from 'react-native';
+import { initDatabase } from '@/db/database';
+import { Stack } from 'expo-router';
+import { SQLiteProvider, useSQLiteContext } from 'expo-sqlite';
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, View } from 'react-native';
 
-import { AnimatedSplashOverlay } from '@/components/animated-icon';
-import AppTabs from '@/components/app-tabs';
+function AppInitializer() {
+  const db = useSQLiteContext();
+  const [isReady, setIsReady] = useState(false);
 
-SplashScreen.preventAutoHideAsync();
+  useEffect(() => {
+    async function init() {
+      if (db) {
+        try {
+          // 1. Create tables first
+          await initDatabase(db);
+          // 2. Seed test data
+          //await seedLargeTestData(db);
+        } catch (error) {
+          console.error('Database initialization failed:', error);
+        } finally {
+          setIsReady(true);
+        }
+      }
+    }
+    init();
+  }, [db]);
 
-export default function TabLayout() {
-  const colorScheme = useColorScheme();
+  if (!isReady) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F2F2F7' }}>
+        <ActivityIndicator size="large" color="#007AFF" />
+      </View>
+    );
+  }
+
+  return <Stack screenOptions={{ headerShown: false }} />;
+}
+
+export default function RootLayout() {
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <AnimatedSplashOverlay />
-      <AppTabs />
-    </ThemeProvider>
+    <SQLiteProvider databaseName="fintrack.db">
+      <AppInitializer />
+    </SQLiteProvider>
   );
 }
