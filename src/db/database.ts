@@ -25,6 +25,24 @@ export interface CategoryRule {
   category: string;
 }
 
+export interface CategoryGoal {
+  category: string;
+  monthlyLimit: number;
+}
+
+export interface CategoryGoalWithProgress extends CategoryGoal {
+  spent: number;
+  percentage: number;
+}
+
+export interface FixedCostSummary {
+  fixedTotal: number;
+  flexibleTotal: number;
+  fixedPercentage: number;
+  flexiblePercentage: number;
+  fixedItemsCount: number;
+}
+
 export interface TransactionRecord {
   id: number;
   date: string;
@@ -45,6 +63,13 @@ export interface MonthlySummary {
   totalExpenses: number;
   netSavings: number;
 }
+
+// Default Dutch & international fixed cost keywords
+const DEFAULT_FIXED_KEYWORDS = [
+  'HUUR', 'HYPOTHEEK', 'ZORGVERZEKERING', 'ENERGIE', 'ZIGGO',
+  'KPN', 'NETFLIX', 'SPOTIFY', 'ICLOUD', 'WATER', 'STEDIN',
+  'ENECO', 'ESSENT', 'VATTENFALL', 'HEALTHCITY', 'BASIC-FIT'
+];
 
 export async function initDatabase(db: SQLiteDatabase): Promise<void> {
   await db.execAsync(`
@@ -68,7 +93,157 @@ export async function initDatabase(db: SQLiteDatabase): Promise<void> {
       keyword TEXT UNIQUE NOT NULL,
       category TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS category_goals (
+      category TEXT PRIMARY KEY,
+      monthly_limit REAL NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS fixed_cost_rules (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      keyword TEXT UNIQUE NOT NULL,
+      category TEXT NOT NULL
+    );
   `);
+}
+
+// Fixed vs. Flexible Costs Summary
+export async function getFixedVsFlexibleSummary(
+  db: SQLiteDatabase,
+  monthName: string
+): Promise<FixedCostSummary> {
+  if (!db) {
+    return {
+      fixedTotal: 0,
+      flexibleTotal: 0,
+      fixedPercentage: 0,
+      flexiblePercentage: 0,
+      fixedItemsCount: 0,
+    };
+  }
+
+  try {
+    // 1. Fetch user rules and smart detected recurring merchants
+    const customRules = await db.getAllAsync<{ keyword: string }>(
+      `SELECT keyword FROM fixed_cost_rules;`
+    );
+    const detectedPatterns = await detectRecurringPatterns(db, 2);
+
+    const recurringKeywords = new Set([
+      ...DEFAULT_FIXED_KEYWORDS,
+      ...customRules.map((r) => r.keyword.toUpperCase()),
+      ...detectedPatterns.map((p) => p.merchant.toUpperCase()),
+    ]);
+
+    // 2. Fetch all expenses for active month
+    const expenses = await db.getAllAsync<{ amount: number; rawDescription: string; merchant: string }>(
+      `SELECT ABS(amount) as amount, rawDescription, merchant 
+       FROM transactions 
+       WHERE monthName = ? AND amount < 0;`,
+      [monthName]
+    );
+
+    let fixedTotal = 0;
+    let flexibleTotal = 0;
+    let fixedItemsCount = 0;
+
+    for (const exp of expenses) {
+      const descUpper = `${exp.rawDescription} ${exp.merchant}`.toUpperCase();
+      const isFixed = Array.from(recurringKeywords).some((kw) => descUpper.includes(kw));
+
+      if (isFixed) {
+        fixedTotal += exp.amount;
+        fixedItemsCount += 1;
+      } else {
+        flexibleTotal += exp.amount;
+      }
+    }
+
+    const grandTotal = fixedTotal + flexibleTotal;
+    const fixedPercentage = grandTotal > 0 ? Math.round((fixedTotal / grandTotal) * 100) : 0;
+    const flexiblePercentage = grandTotal > 0 ? 100 - fixedPercentage : 0;
+
+    return {
+      fixedTotal,
+      flexibleTotal,
+      fixedPercentage,
+      flexiblePercentage,
+      fixedItemsCount,
+    };
+  } catch (error) {
+    console.error('Error in getFixedVsFlexibleSummary:', error);
+    return {
+      fixedTotal: 0,
+      flexibleTotal: 0,
+      fixedPercentage: 0,
+      flexiblePercentage: 0,
+      fixedItemsCount: 0,
+    };
+  }
+}
+
+export async function addFixedCostRule(
+  db: SQLiteDatabase,
+  keyword: string,
+  category: string = 'Subscriptions & Bills'
+): Promise<void> {
+  await db.runAsync(
+    `INSERT OR REPLACE INTO fixed_cost_rules (keyword, category) VALUES (?, ?);`,
+    [keyword.toUpperCase(), category]
+  );
+}
+
+// Category Goals Management
+export async function getCategoryGoalsWithProgress(
+  db: SQLiteDatabase,
+  monthStr: string
+): Promise<CategoryGoalWithProgress[]> {
+  const query = `
+    SELECT 
+      c.category,
+      COALESCE(g.monthly_limit, 0) as monthlyLimit,
+      COALESCE(SUM(ABS(t.amount)), 0) as spent
+    FROM (
+      SELECT DISTINCT category FROM transactions WHERE amount < 0
+      UNION
+      SELECT category FROM category_goals
+    ) c
+    LEFT JOIN category_goals g ON c.category = g.category
+    LEFT JOIN transactions t ON c.category = t.category 
+      AND t.monthName = ? 
+      AND t.amount < 0
+    GROUP BY c.category
+    ORDER BY spent DESC;
+  `;
+  const rows = await db.getAllAsync<{ category: string; monthlyLimit: number; spent: number }>(
+    query,
+    [monthStr]
+  );
+
+  return rows.map((r) => {
+    const limit = r.monthlyLimit || 0;
+    const spent = r.spent || 0;
+    const percentage = limit > 0 ? (spent / limit) * 100 : 0;
+    return {
+      category: r.category,
+      monthlyLimit: limit,
+      spent: spent,
+      percentage: Math.round(percentage),
+    };
+  });
+}
+
+export async function setCategoryGoal(
+  db: SQLiteDatabase,
+  category: string,
+  monthlyLimit: number
+): Promise<void> {
+  await db.runAsync(
+    `INSERT INTO category_goals (category, monthly_limit)
+     VALUES (?, ?)
+     ON CONFLICT(category) DO UPDATE SET monthly_limit = excluded.monthly_limit;`,
+    [category, monthlyLimit]
+  );
 }
 
 // Transaction Writes & Management
@@ -363,4 +538,180 @@ export async function getFullYearTrendData(
 
 export async function clearAllData(db: SQLiteDatabase): Promise<void> {
   await db.execAsync('DELETE FROM transactions;');
+}
+
+export interface DetectedRecurringItem {
+  merchant: string;
+  category: string;
+  averageAmount: number;
+  type: 'INCOME' | 'EXPENSE';
+  occurrenceCount: number; // Number of months detected
+  monthsSeen: string[]; // List of YYYY-MM strings
+}
+
+/**
+ * Smart Pattern Detection: Scans historical transactions across consecutive months
+ * to auto-detect recurring fixed expenses and recurring incomes.
+ */
+export async function detectRecurringPatterns(
+  db: SQLiteDatabase,
+  minMonthsThreshold: number = 2
+): Promise<DetectedRecurringItem[]> {
+  if (!db) return [];
+
+  try {
+    // Group transactions by merchant/description pattern and month
+    const rows = await db.getAllAsync<{
+      merchantKey: string;
+      category: string;
+      monthName: string;
+      avgAmount: number;
+    }>(`
+      SELECT 
+        UPPER(TRIM(COALESCE(NULLIF(merchant, 'Unknown'), rawDescription))) AS merchantKey,
+        category,
+        monthName,
+        AVG(amount) AS avgAmount
+      FROM transactions
+      GROUP BY merchantKey, monthName
+      ORDER BY merchantKey, monthName DESC;
+    `);
+
+    // Group month occurrences per merchant
+    const merchantMap: Record<
+      string,
+      {
+        category: string;
+        amounts: number[];
+        monthsSeen: string[];
+      }
+    > = {};
+
+    for (const row of rows) {
+      if (!row.merchantKey || row.merchantKey.trim().length === 0) continue;
+
+      if (!merchantMap[row.merchantKey]) {
+        merchantMap[row.merchantKey] = {
+          category: row.category,
+          amounts: [],
+          monthsSeen: [],
+        };
+      }
+
+      merchantMap[row.merchantKey].amounts.push(row.avgAmount);
+      merchantMap[row.merchantKey].monthsSeen.push(row.monthName);
+    }
+
+    const detectedList: DetectedRecurringItem[] = [];
+
+    for (const [merchant, data] of Object.entries(merchantMap)) {
+      // Must appear in at least N distinct months to qualify as recurring
+      if (data.monthsSeen.length >= minMonthsThreshold) {
+        const sum = data.amounts.reduce((a, b) => a + b, 0);
+        const averageAmount = sum / data.amounts.length;
+
+        detectedList.push({
+          merchant,
+          category: data.category,
+          averageAmount,
+          type: averageAmount > 0 ? 'INCOME' : 'EXPENSE',
+          occurrenceCount: data.monthsSeen.length,
+          monthsSeen: data.monthsSeen,
+        });
+      }
+    }
+
+    return detectedList.sort((a, b) => Math.abs(b.averageAmount) - Math.abs(a.averageAmount));
+  } catch (error) {
+    console.error('Failed to detect recurring patterns:', error);
+    return [];
+  }
+}
+
+/**
+ * Evaluates whether a given merchant/description is classified as a Fixed Cost
+ * via custom rules, default keywords, OR smart recurring pattern detection.
+ */
+ export async function isTransactionFixed(
+  db: SQLiteDatabase,
+  merchantOrDesc: string
+): Promise<boolean> {
+  if (!db || !merchantOrDesc) return false;
+  const targetUpper = merchantOrDesc.toUpperCase().trim();
+
+  // 1. Check custom user rules
+  const customRules = await db.getAllAsync<{ keyword: string }>(
+    `SELECT keyword FROM fixed_cost_rules;`
+  );
+  const customKeywords = customRules.map((r) => r.keyword.toUpperCase());
+
+  // 2. Check smart detected recurring patterns
+  const detectedPatterns = await detectRecurringPatterns(db, 2);
+  const detectedKeywords = detectedPatterns.map((p) => p.merchant.toUpperCase());
+
+  const allFixedKeywords = new Set([
+    ...DEFAULT_FIXED_KEYWORDS,
+    ...customKeywords,
+    ...detectedKeywords,
+  ]);
+
+  return Array.from(allFixedKeywords).some((kw) => targetUpper.includes(kw));
+}
+
+export async function toggleFixedCostRule(
+  db: SQLiteDatabase,
+  keyword: string,
+  category: string = 'Subscriptions & Bills'
+): Promise<boolean> {
+  if (!db || !keyword) return false;
+  const kwUpper = keyword.toUpperCase().trim();
+  const currentlyFixed = await isTransactionFixed(db, kwUpper);
+
+  if (currentlyFixed) {
+    await db.runAsync(`DELETE FROM fixed_cost_rules WHERE keyword = ?;`, [kwUpper]);
+    return false; // Now unfixed
+  } else {
+    await db.runAsync(
+      `INSERT OR REPLACE INTO fixed_cost_rules (keyword, category) VALUES (?, ?);`,
+      [kwUpper, category]
+    );
+    return true; // Now fixed
+  }
+}
+
+export async function getFixedOrFlexibleTransactions(
+  db: SQLiteDatabase,
+  monthName: string,
+  isFixedTarget: boolean
+): Promise<Transaction[]> {
+  if (!db) return [];
+
+  try {
+    const customRules = await db.getAllAsync<{ keyword: string }>(
+      `SELECT keyword FROM fixed_cost_rules;`
+    );
+    const detectedPatterns = await detectRecurringPatterns(db, 2);
+
+    const recurringKeywords = Array.from(
+      new Set([
+        ...DEFAULT_FIXED_KEYWORDS,
+        ...customRules.map((r) => r.keyword.toUpperCase()),
+        ...detectedPatterns.map((p) => p.merchant.toUpperCase()),
+      ])
+    );
+
+    const expenses = await db.getAllAsync<Transaction>(
+      `SELECT * FROM transactions WHERE monthName = ? AND amount < 0 ORDER BY ABS(amount) DESC;`,
+      [monthName]
+    );
+
+    return expenses.filter((exp) => {
+      const descUpper = `${exp.rawDescription} ${exp.merchant}`.toUpperCase();
+      const isFixed = recurringKeywords.some((kw) => descUpper.includes(kw));
+      return isFixedTarget ? isFixed : !isFixed;
+    });
+  } catch (error) {
+    console.error('Error in getFixedOrFlexibleTransactions:', error);
+    return [];
+  }
 }

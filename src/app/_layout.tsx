@@ -1,4 +1,5 @@
 import { initDatabase } from '@/db/database';
+import { requestAndScheduleImportReminders } from '@/utils/notifications';
 import { Stack } from 'expo-router';
 import { SQLiteProvider, useSQLiteContext } from 'expo-sqlite';
 import { useEffect, useState } from 'react';
@@ -12,12 +13,13 @@ function AppInitializer() {
     async function init() {
       if (db) {
         try {
-          // 1. Create tables first
+          // 1. Create tables
           await initDatabase(db);
-          // 2. Seed test data
-          //await seedLargeTestData(db);
+          
+          // 2. Schedule 3x/month import notifications (1st, 15th, 28th)
+          await requestAndScheduleImportReminders();
         } catch (error) {
-          console.error('Database initialization failed:', error);
+          console.error('Initialization failed:', error);
         } finally {
           setIsReady(true);
         }
