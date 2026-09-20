@@ -523,19 +523,22 @@ export async function getTransactionsByMonthAndCategory(
   db: SQLiteDatabase,
   monthName: string,
   category: string,
-  profileId: number = 1
+  profileId: number
 ): Promise<Transaction[]> {
-  try {
-    const query = `
-      SELECT * FROM transactions
-      WHERE monthName = ? AND category = ? AND profileId = ?
-      ORDER BY date DESC;
-    `;
-    return await db.getAllAsync<Transaction>(query, [monthName, category, profileId]);
-  } catch (error) {
-    console.error('Error in getTransactionsByMonthAndCategory:', error);
-    return [];
-  }
+  const isAll = category === 'All';
+  const categoryFilter = isAll ? '' : 'AND category = ?';
+
+  const query = `
+    SELECT * FROM transactions
+    WHERE profileId = ? AND monthName = ? ${categoryFilter}
+    ORDER BY ABS(amount) DESC;
+  `;
+
+  const queryParams = isAll
+    ? [profileId, monthName]
+    : [profileId, monthName, category];
+
+  return await db.getAllAsync<Transaction>(query, queryParams);
 }
 
 export async function searchTransactions(
@@ -891,15 +894,26 @@ export async function getCategoryFixedVsFlexibleSummary(
 ): Promise<FixedCostSummary> {
   const isAll = category === 'All';
 
-  const categoryFilter = isAll ? '' : 'AND category = ?';
+  const categoryFilter = isAll ? '' : 'AND t.category = ?';
 
   const query = `
     SELECT 
-      SUM(CASE WHEN merchant IN (SELECT keyword FROM fixed_cost_rules WHERE profileId = ?) THEN ABS(amount) ELSE 0 END) as fixedTotal,
-      SUM(CASE WHEN merchant NOT IN (SELECT keyword FROM fixed_cost_rules WHERE profileId = ?) THEN ABS(amount) ELSE 0 END) as flexibleTotal,
-      COUNT(CASE WHEN merchant IN (SELECT keyword FROM fixed_cost_rules WHERE profileId = ?) THEN 1 END) as fixedCount
-    FROM transactions
-    WHERE profileId = ? AND monthName = ? ${categoryFilter};
+      SUM(CASE WHEN EXISTS (
+        SELECT 1 FROM fixed_cost_rules r 
+        WHERE r.profileId = ? AND t.merchant LIKE '%' || r.keyword || '%'
+      ) THEN ABS(t.amount) ELSE 0 END) as fixedTotal,
+
+      SUM(CASE WHEN NOT EXISTS (
+        SELECT 1 FROM fixed_cost_rules r 
+        WHERE r.profileId = ? AND t.merchant LIKE '%' || r.keyword || '%'
+      ) THEN ABS(t.amount) ELSE 0 END) as flexibleTotal,
+
+      COUNT(CASE WHEN EXISTS (
+        SELECT 1 FROM fixed_cost_rules r 
+        WHERE r.profileId = ? AND t.merchant LIKE '%' || r.keyword || '%'
+      ) THEN 1 END) as fixedCount
+    FROM transactions t
+    WHERE t.profileId = ? AND t.monthName = ? ${categoryFilter};
   `;
 
   const queryParams = isAll

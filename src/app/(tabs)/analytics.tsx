@@ -1,3 +1,5 @@
+import { TransactionDetailModal } from '@/components/modals/TransactionDetailModal';
+import { TransactionListModal } from '@/components/modals/TransactionListModal';
 import { getCategoryColor } from '@/constants/colors';
 import {
   addFixedCostRule,
@@ -5,7 +7,11 @@ import {
   getCategoryFixedVsFlexibleSummary,
   getMonthlyCategoryTotals,
   getRecurringCandidates,
-  RecurringCandidate
+  getTransactionsByMonthAndCategory,
+  isTransactionFixed,
+  RecurringCandidate,
+  toggleFixedCostRule,
+  Transaction
 } from '@/db/database';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
@@ -38,6 +44,21 @@ const CATEGORIES = [
   'Taxes & Municipal Fees',
 ];
 
+const MONTH_NAMES: Record<string, string> = {
+  '2026-01': 'January 2026',
+  '2026-02': 'February 2026',
+  '2026-03': 'March 2026',
+  '2026-04': 'April 2026',
+  '2026-05': 'May 2026',
+  '2026-06': 'June 2026',
+  '2026-07': 'July 2026',
+  '2026-08': 'August 2026',
+  '2026-09': 'September 2026',
+  '2026-10': 'October 2026',
+  '2026-11': 'November 2026',
+  '2026-12': 'December 2026',
+};
+
 export default function AnalyticsScreen() {
   const db = useSQLiteContext();
   const { activeProfile } = useProfile();
@@ -46,6 +67,9 @@ export default function AnalyticsScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState('All');
+  const [scrubbedMonthKey, setScrubbedMonthKey] = useState<string | null>(null);
+  const [scrubbedAmount, setScrubbedAmount] = useState<number | null>(null);
+
   const [chartData, setChartData] = useState<any[]>([]);
   const [maxChartValue, setMaxChartValue] = useState<number>(100);
 
@@ -62,6 +86,15 @@ export default function AnalyticsScreen() {
   const [recurringCandidates, setRecurringCandidates] = useState<RecurringCandidate[]>([]);
   const [selectedCandidates, setSelectedCandidates] = useState<Record<string, boolean>>({});
   const [showSuggestionsAccordion, setShowSuggestionsAccordion] = useState(false);
+
+  // Drill-down Modals State
+  const [listModalVisible, setListModalVisible] = useState(false);
+  const [selectedMonthForModal, setSelectedMonthForModal] = useState('');
+  const [modalTransactions, setModalTransactions] = useState<Transaction[]>([]);
+  const [loadingModalTrx, setLoadingModalTrx] = useState(false);
+
+  const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
+  const [isCurrentTrxFixed, setIsCurrentTrxFixed] = useState(false);
 
   const [summary, setSummary] = useState({
     total: 0,
@@ -83,7 +116,6 @@ export default function AnalyticsScreen() {
         '2026-09', '2026-10', '2026-11', '2026-12'
       ];
 
-      // Query monthly category totals for line chart
       const monthlyTotals = await Promise.all(
         months.map(async (m) => {
           const totals = await getMonthlyCategoryTotals(db, m, activeProfileId);
@@ -98,7 +130,6 @@ export default function AnalyticsScreen() {
         })
       );
 
-      // Query category-filtered Fixed vs Flexible summary
       const currentMonth = '2026-09';
       const fixedRes = await getCategoryFixedVsFlexibleSummary(
         db,
@@ -108,7 +139,6 @@ export default function AnalyticsScreen() {
       );
       setFixedSummary(fixedRes);
 
-      // Query recurring candidates and filter by selected category
       const candidatesRes = await getRecurringCandidates(db, activeProfileId);
       const filteredCandidates = (candidatesRes || []).filter((c) => {
         if (selectedCategory === 'All') return true;
@@ -123,7 +153,6 @@ export default function AnalyticsScreen() {
       });
       setSelectedCandidates(initialSelection);
 
-      // Process chart values
       const values = monthlyTotals.map((m) => m.amount);
       const peakVal = Math.max(...values, 10);
       const calculatedMax = Math.ceil(peakVal * 1.15);
@@ -132,7 +161,7 @@ export default function AnalyticsScreen() {
       const formattedChartData = monthlyTotals.map((item) => ({
         value: Math.round(item.amount),
         label: item.month.split('-')[1],
-        dataPointColor: activeColor,
+        monthKey: item.month,
       }));
 
       const total = values.reduce((a, b) => a + b, 0);
@@ -156,13 +185,71 @@ export default function AnalyticsScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [db, selectedCategory, activeColor, activeProfileId]);
+  }, [db, selectedCategory, activeProfileId]);
 
   useFocusEffect(
     useCallback(() => {
       loadAnalyticsData();
     }, [loadAnalyticsData])
   );
+
+  const handleOpenMonthDetails = async (monthKey: string) => {
+    if (!db) return;
+    setSelectedMonthForModal(monthKey);
+    setListModalVisible(true);
+    try {
+      setLoadingModalTrx(true);
+      const items = await getTransactionsByMonthAndCategory(
+        db,
+        monthKey,
+        selectedCategory,
+        activeProfileId
+      );
+      setModalTransactions(items || []);
+    } catch (err) {
+      console.error('Failed to query month transactions:', err);
+    } finally {
+      setLoadingModalTrx(false);
+    }
+  };
+
+  const handleSelectTransactionFromModal = async (trx: Transaction) => {
+    setSelectedTransaction(trx);
+    if (db) {
+      const keyword = trx.merchant !== 'Unknown' ? trx.merchant : trx.rawDescription;
+      const isFixed = await isTransactionFixed(db, keyword, activeProfileId);
+      setIsCurrentTrxFixed(isFixed);
+    }
+  };
+
+  const handleToggleFixedCostInDetail = async () => {
+    if (!db || !selectedTransaction) return;
+    const keyword =
+      selectedTransaction.merchant !== 'Unknown'
+        ? selectedTransaction.merchant
+        : selectedTransaction.rawDescription;
+
+    const newState = await toggleFixedCostRule(
+      db,
+      keyword,
+      selectedTransaction.category,
+      activeProfileId
+    );
+    setIsCurrentTrxFixed(newState);
+
+    setTimeout(async () => {
+      if (selectedMonthForModal) {
+        const updated = await getTransactionsByMonthAndCategory(
+          db,
+          selectedMonthForModal,
+          selectedCategory,
+          activeProfileId
+        );
+        setModalTransactions(updated || []);
+      }
+      await loadAnalyticsData();
+    }, 100);
+  };
 
   const toggleCandidateSelection = (merchant: string) => {
     setSelectedCandidates((prev) => ({
@@ -246,7 +333,11 @@ export default function AnalyticsScreen() {
                     styles.chipPill,
                     isActive && { backgroundColor: color },
                   ]}
-                  onPress={() => setSelectedCategory(cat)}
+                  onPress={() => {
+                    setSelectedCategory(cat);
+                    setScrubbedMonthKey(null);
+                    setScrubbedAmount(null);
+                  }}
                 >
                   {!isActive && (
                     <View style={[styles.miniDot, { backgroundColor: color }]} />
@@ -264,9 +355,13 @@ export default function AnalyticsScreen() {
             })}
           </ScrollView>
 
-          {/* 1. Line Graph Card (Spending Velocity) */}
+          {/* 1. Interactive Line Graph Card */}
           <View style={styles.chartCard}>
-            <Text style={styles.chartTitle}>2026 Spending Velocity ({selectedCategory})</Text>
+            <View style={styles.chartHeaderRow}>
+              <Text style={styles.chartTitle}>2026 Spending Velocity ({selectedCategory})</Text>
+              <Text style={styles.chartHintText}>Drag across chart to scrub</Text>
+            </View>
+
             {loading && !refreshing ? (
               <ActivityIndicator size="small" color={activeColor} style={{ paddingVertical: 40 }} />
             ) : (
@@ -294,12 +389,57 @@ export default function AnalyticsScreen() {
                   xAxisColor="#E5E5EA"
                   yAxisTextStyle={{ color: '#8E8E93', fontSize: 10 }}
                   xAxisLabelTextStyle={{ color: '#8E8E93', fontSize: 10 }}
+                  pointerConfig={{
+                    pointerStripUptoDataPoint: true,
+                    pointerStripColor: activeColor,
+                    pointerStripWidth: 2,
+                    strokeDashArray: [4, 4],
+                    pointerColor: activeColor,
+                    radius: 6,
+                    activatePointersOnLongPress: false,
+                    pointerVanishDelay: 2000,
+                    pointerLabelComponent: (items: any[]) => {
+                      const item = items[0];
+                      if (!item) return null;
+                    
+                      if (item.monthKey !== scrubbedMonthKey) {
+                        requestAnimationFrame(() => {
+                          setScrubbedMonthKey(item.monthKey);
+                          setScrubbedAmount(item.value);
+                        });
+                      }
+                    
+                      return null;
+                    },
+                  }}
                 />
               </View>
             )}
+
+            {/* Large Prominent Touch Target Banner below Chart */}
+            {scrubbedMonthKey && scrubbedAmount !== null && (
+              <TouchableOpacity
+                style={[styles.inspectBanner, { borderLeftColor: activeColor }]}
+                activeOpacity={0.8}
+                onPress={() => handleOpenMonthDetails(scrubbedMonthKey)}
+              >
+                <View>
+                  <Text style={styles.inspectMonthText}>
+                    {MONTH_NAMES[scrubbedMonthKey] || scrubbedMonthKey}
+                  </Text>
+                  <Text style={styles.inspectAmountText}>
+                    €{scrubbedAmount.toLocaleString()} ({selectedCategory})
+                  </Text>
+                </View>
+                <View style={styles.inspectActionBtn}>
+                  <Text style={styles.inspectActionText}>Inspect Items</Text>
+                  <Ionicons name="chevron-forward" size={14} color="#007AFF" />
+                </View>
+              </TouchableOpacity>
+            )}
           </View>
 
-          {/* 2. Fixed vs Flexible Board (Located directly UNDER Spending Velocity Chart) */}
+          {/* 2. Fixed vs Flexible Board */}
           <View style={styles.fixedCard}>
             <View style={styles.fixedCardHeader}>
               <View style={styles.fixedHeaderLeft}>
@@ -338,7 +478,7 @@ export default function AnalyticsScreen() {
               </View>
             </View>
 
-            {/* In-Card Category-Filtered Candidates Accordion */}
+            {/* Collapsible Suggestions Accordion */}
             {recurringCandidates.length > 0 && (
               <View style={styles.inCardSuggestionsContainer}>
                 <TouchableOpacity
@@ -440,6 +580,27 @@ export default function AnalyticsScreen() {
             </View>
           </View>
         </ScrollView>
+
+        {/* Drill-down Transaction List Modal */}
+        <TransactionListModal
+          visible={listModalVisible}
+          listType="EXPENSE"
+          selectedMonth={selectedMonthForModal}
+          monthNames={MONTH_NAMES}
+          transactions={modalTransactions}
+          loading={loadingModalTrx}
+          onClose={() => setListModalVisible(false)}
+          onSelectTransaction={handleSelectTransactionFromModal}
+        />
+
+        {/* Individual Transaction Detail Modal */}
+        <TransactionDetailModal
+          visible={selectedTransaction !== null}
+          transaction={selectedTransaction}
+          isFixed={isCurrentTrxFixed}
+          onClose={() => setSelectedTransaction(null)}
+          onToggleFixed={handleToggleFixedCostInDetail}
+        />
       </View>
     </SafeAreaView>
   );
@@ -504,10 +665,52 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 1,
   },
-  chartTitle: { fontSize: 15, fontWeight: '600', color: '#1C1C1E', marginBottom: 12 },
+  chartHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  chartTitle: { fontSize: 14, fontWeight: '600', color: '#1C1C1E' },
+  chartHintText: { fontSize: 11, color: '#8E8E93' },
   chartWrapper: { alignItems: 'center', paddingTop: 8 },
 
-  // Fixed vs Flexible Card
+  inspectBanner: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#F2F2F7',
+    borderRadius: 12,
+    borderLeftWidth: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginTop: 12,
+  },
+  inspectMonthText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1C1C1E',
+  },
+  inspectAmountText: {
+    fontSize: 11,
+    color: '#8E8E93',
+    marginTop: 1,
+  },
+  inspectActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#E6F0FF',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  inspectActionText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#007AFF',
+    marginRight: 4,
+  },
+
   fixedCard: {
     backgroundColor: '#FFF',
     borderRadius: 16,
@@ -580,7 +783,6 @@ const styles = StyleSheet.create({
     color: '#1C1C1E',
   },
 
-  // In-Card Auto-Detection Accordion
   inCardSuggestionsContainer: {
     marginTop: 14,
     paddingTop: 12,
