@@ -1,3 +1,9 @@
+import { AllocationChart } from '@/components/dashboard/AllocationChart';
+import { CommitmentLink } from '@/components/dashboard/CommitmentLink';
+import { MonthStepper } from '@/components/dashboard/MonthStepper';
+import { SummaryCards } from '@/components/dashboard/SummaryCards';
+import { TransactionDetailModal } from '@/components/modals/TransactionDetailModal';
+import { TransactionListModal } from '@/components/modals/TransactionListModal';
 import { ProfileSwitcherModal } from '@/components/ProfileSwitcherModal';
 import { getCategoryColor } from '@/constants/colors';
 import {
@@ -32,14 +38,11 @@ import {
   RefreshControl,
   ScrollView,
   StyleSheet,
-  Switch,
   Text,
-  TextInput,
   TouchableOpacity,
   TouchableWithoutFeedback,
   View
 } from 'react-native';
-import { BarChart } from 'react-native-gifted-charts';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useProfile } from '../../contexts/ProfileContext';
 
@@ -57,13 +60,6 @@ const MONTH_NAMES: Record<string, string> = {
   '2026-11': 'November 2026',
   '2026-12': 'December 2026',
 };
-
-function formatCompactCurrency(val: number): string {
-  if (val >= 1000) {
-    return `€${(val / 1000).toFixed(1)}k`;
-  }
-  return `€${Math.round(val)}`;
-}
 
 const getCurrentMonthKey = (): string => {
   const now = new Date();
@@ -103,7 +99,6 @@ export default function DashboardScreen() {
   const [listModalType, setListModalType] = useState<'INCOME' | 'EXPENSE' | 'FIXED' | 'FLEXIBLE'>('EXPENSE');
   const [listModalTransactions, setListModalTransactions] = useState<Transaction[]>([]);
   const [loadingListModal, setLoadingListModal] = useState(false);
-  const [modalSearchQuery, setModalSearchQuery] = useState('');
 
   // Filters & State
   const [availableMonths, setAvailableMonths] = useState<string[]>([]);
@@ -144,7 +139,6 @@ export default function DashboardScreen() {
 
       const dbMonths = await getAvailableMonths(db, activeProfileId);
 
-      // Proactive Awaiting Month Logic
       let monthsList = dbMonths.length > 0 ? [...dbMonths] : [currentMonthKey];
       if (!monthsList.includes(currentMonthKey)) {
         monthsList = [currentMonthKey, ...monthsList];
@@ -291,7 +285,6 @@ export default function DashboardScreen() {
 
   const handleOpenCardModal = async (type: 'INCOME' | 'EXPENSE' | 'FIXED' | 'FLEXIBLE') => {
     setListModalType(type);
-    setModalSearchQuery('');
     setListModalVisible(true);
     if (!db) return;
 
@@ -453,47 +446,11 @@ export default function DashboardScreen() {
   };
 
   const grandTotal = summary.totalExpenses;
-  const maxCategoryAmount = Math.max(...categoryData.map((c) => c.totalAmount || 0), 1);
   const totalTransactions = categoryData.reduce((a, b) => a + (b.count || 0), 0);
-  const isPositiveNet = summary.netSavings >= 0;
 
   const displayedCategories = categoryData.filter((c) => {
     if (selectedBarCategory && c.category !== selectedBarCategory) return false;
     return true;
-  });
-
-  const filteredModalTransactions = listModalTransactions.filter((trx) => {
-    if (!modalSearchQuery.trim()) return true;
-    const term = modalSearchQuery.toLowerCase().trim();
-    return (
-      (trx.merchant && trx.merchant.toLowerCase().includes(term)) ||
-      (trx.rawDescription && trx.rawDescription.toLowerCase().includes(term)) ||
-      (trx.category && trx.category.toLowerCase().includes(term))
-    );
-  });
-
-  const barData = categoryData.slice(0, 6).map((item) => {
-    const isSelected = selectedBarCategory === item.category;
-    const isDimmed = selectedBarCategory !== null && !isSelected;
-    const color = getCategoryColor(item.category);
-
-    return {
-      value: Math.round(item.totalAmount),
-      label: item.category.length > 6 ? `${item.category.substring(0, 5)}…` : item.category,
-      topLabelComponent: () => (
-        <View style={styles.barTopLabelContainer}>
-          <Text
-            numberOfLines={1}
-            adjustsFontSizeToFit
-            style={[styles.barTopLabel, isDimmed && { opacity: 0.3 }]}
-          >
-            {formatCompactCurrency(item.totalAmount)}
-          </Text>
-        </View>
-      ),
-      frontColor: isDimmed ? 'rgba(229, 229, 234, 0.8)' : color,
-      onPress: () => handleBarPress(item.category),
-    };
   });
 
   return (
@@ -509,7 +466,6 @@ export default function DashboardScreen() {
             <View style={styles.headerLeftGroup}>
               <Text style={styles.title}>Dashboard</Text>
 
-              {/* Active Profile Pill Button */}
               {activeProfile && (
                 <TouchableOpacity
                   style={[styles.profilePill, { backgroundColor: activeProfile.avatarColor }]}
@@ -532,193 +488,33 @@ export default function DashboardScreen() {
           </View>
 
           {/* Month Stepper Navigation */}
-          <View style={styles.monthNavRow}>
-            <TouchableOpacity
-              style={[styles.navButton, currentIndex >= availableMonths.length - 1 && styles.navButtonDisabled]}
-              onPress={handlePrevMonth}
-              disabled={currentIndex >= availableMonths.length - 1}
-            >
-              <Ionicons
-                name="chevron-back"
-                size={18}
-                color={currentIndex >= availableMonths.length - 1 ? '#C7C7CC' : '#007AFF'}
-              />
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.monthTitleButton} onPress={() => setMonthPickerVisible(true)}>
-              <Text style={styles.monthLabelText}>
-                {MONTH_NAMES[selectedMonth] || selectedMonth || 'Select Month'}
-              </Text>
-              <Ionicons name="chevron-down" size={14} color="#8E8E93" style={{ marginLeft: 6 }} />
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.navButton, currentIndex <= 0 && styles.navButtonDisabled]}
-              onPress={handleNextMonth}
-              disabled={currentIndex <= 0}
-            >
-              <Ionicons
-                name="chevron-forward"
-                size={18}
-                color={currentIndex <= 0 ? '#C7C7CC' : '#007AFF'}
-              />
-            </TouchableOpacity>
-          </View>
-
-          {/* Month Statement Coverage Status Badge */}
-          {coverageStatus.status !== 'EMPTY' && (
-            <View style={styles.coverageBadgeRow}>
-              <View
-                style={[
-                  styles.coverageDot,
-                  coverageStatus.status === 'IN_PROGRESS' && { backgroundColor: '#FF9500' },
-                  coverageStatus.status === 'PARTIAL' && { backgroundColor: '#FF3B30' },
-                  coverageStatus.status === 'COMPLETE' && { backgroundColor: '#34C759' },
-                ]}
-              />
-              <Text
-                style={[
-                  styles.coverageText,
-                  coverageStatus.status === 'IN_PROGRESS' && { color: '#D97706' },
-                  coverageStatus.status === 'PARTIAL' && { color: '#DC2626' },
-                  coverageStatus.status === 'COMPLETE' && { color: '#16A34A' },
-                ]}
-              >
-                {coverageStatus.label}
-              </Text>
-            </View>
-          )}
+          <MonthStepper
+            selectedMonth={selectedMonth}
+            availableMonths={availableMonths}
+            monthNames={MONTH_NAMES}
+            coverageStatus={coverageStatus}
+            onPrevMonth={handlePrevMonth}
+            onNextMonth={handleNextMonth}
+            onOpenMonthPicker={() => setMonthPickerVisible(true)}
+          />
 
           {/* Hero Summary Cards */}
-          <View style={styles.summaryContainer}>
-            <View style={styles.cardRow}>
-              {/* Income Card */}
-              <TouchableOpacity
-                style={[styles.card, styles.incomeCard]}
-                activeOpacity={0.8}
-                onPress={() => handleOpenCardModal('INCOME')}
-              >
-                <View style={styles.cardHeaderWithIcon}>
-                  <Text style={styles.cardLabel}>INCOME</Text>
-                  <Ionicons name="open-outline" size={12} color="#34C759" />
-                </View>
-                <Text style={styles.incomeText}>
-                  +€{summary.totalIncome.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                </Text>
-              </TouchableOpacity>
+          <SummaryCards
+            summary={summary}
+            totalTransactions={totalTransactions}
+            categoryCount={categoryData.length}
+            onOpenCardModal={handleOpenCardModal}
+          />
 
-              {/* Expenses Card */}
-              <TouchableOpacity
-                style={[styles.card, styles.expenseCard]}
-                activeOpacity={0.8}
-                onPress={() => handleOpenCardModal('EXPENSE')}
-              >
-                <View style={styles.cardHeaderWithIcon}>
-                  <Text style={styles.cardLabel}>EXPENSES</Text>
-                  <Ionicons name="open-outline" size={12} color="#FF3B30" />
-                </View>
-                <Text style={styles.expenseText}>
-                  -€{summary.totalExpenses.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                </Text>
-              </TouchableOpacity>
-            </View>
+          {/* Allocation Bar Chart */}
+          <AllocationChart
+            categoryData={categoryData}
+            selectedBarCategory={selectedBarCategory}
+            onBarPress={handleBarPress}
+          />
 
-            {/* Net Cash Flow Card */}
-            <View style={styles.netCard}>
-              <View>
-                <Text style={styles.netLabel}>NET CASH FLOW</Text>
-                <Text style={styles.netSubtext}>
-                  {totalTransactions} expense items across {categoryData.length} categories
-                </Text>
-              </View>
-              <Text style={[styles.netText, { color: isPositiveNet ? '#34C759' : '#FF3B30' }]}>
-                {isPositiveNet ? '+' : ''}€
-                {summary.netSavings.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </Text>
-            </View>
-          </View>
-
-          {/* Fixed vs. Flexible Spending Split Card */}
-          <View style={styles.fixedCard}>
-            <View style={styles.fixedCardHeader}>
-              <View style={styles.fixedHeaderLeft}>
-                <Ionicons name="repeat-outline" size={18} color="#007AFF" style={{ marginRight: 6 }} />
-                <Text style={styles.fixedCardTitle}>Fixed vs. Flexible Split</Text>
-              </View>
-              <Text style={styles.fixedCardSub}>
-                {fixedSummary.fixedItemsCount} recurring commitments
-              </Text>
-            </View>
-
-            {/* Progress Bar Track */}
-            <View style={styles.splitTrack}>
-              <View style={[styles.fixedFill, { width: `${fixedSummary.fixedPercentage}%` }]} />
-              <View style={[styles.flexibleFill, { width: `${fixedSummary.flexiblePercentage}%` }]} />
-            </View>
-
-            {/* Interactive Tappable Legend Buttons */}
-            <View style={styles.splitLabelsRow}>
-              <TouchableOpacity
-                style={styles.splitLegendItem}
-                activeOpacity={0.7}
-                onPress={() => handleOpenCardModal('FIXED')}
-              >
-                <View style={[styles.legendDot, { backgroundColor: '#007AFF' }]} />
-                <Text style={styles.splitLabelText}>Fixed: </Text>
-                <Text style={styles.splitValText}>
-                  €{fixedSummary.fixedTotal.toFixed(0)} ({fixedSummary.fixedPercentage}%)
-                </Text>
-                <Ionicons name="chevron-forward" size={12} color="#007AFF" style={{ marginLeft: 2 }} />
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.splitLegendItem}
-                activeOpacity={0.7}
-                onPress={() => handleOpenCardModal('FLEXIBLE')}
-              >
-                <View style={[styles.legendDot, { backgroundColor: '#34C759' }]} />
-                <Text style={styles.splitLabelText}>Flexible: </Text>
-                <Text style={styles.splitValText}>
-                  €{fixedSummary.flexibleTotal.toFixed(0)} ({fixedSummary.flexiblePercentage}%)
-                </Text>
-                <Ionicons name="chevron-forward" size={12} color="#34C759" style={{ marginLeft: 2 }} />
-              </TouchableOpacity>
-            </View>
-          </View>
-
-          {/* Bar Chart Visual */}
-          {barData.length > 0 && (
-            <View style={styles.chartCard}>
-              <View style={styles.chartHeaderRow}>
-                <Text style={styles.sectionTitle}>Spending Allocation</Text>
-                {selectedBarCategory && (
-                  <TouchableOpacity onPress={() => handleBarPress(selectedBarCategory)}>
-                    <Text style={styles.resetFilterText}>Show All</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-              <View style={styles.chartWrapper}>
-                <BarChart
-                  data={barData}
-                  barWidth={24}
-                  spacing={16}
-                  roundedTop
-                  roundedBottom
-                  hideRules
-                  xAxisThickness={1}
-                  yAxisThickness={0}
-                  xAxisColor="#E5E5EA"
-                  yAxisTextStyle={{ color: '#8E8E93', fontSize: 10 }}
-                  xAxisLabelTextStyle={{ color: '#8E8E93', fontSize: 10, fontWeight: '500' }}
-                  height={130}
-                  noOfSections={3}
-                  maxValue={Math.ceil(maxCategoryAmount * 1.25)}
-                  isAnimated
-                  animationDuration={300}
-                />
-              </View>
-            </View>
-          )}
+          {/* Compact 1-Line Fixed vs Flexible Link */}
+          <CommitmentLink fixedSummary={fixedSummary} />
 
           {/* Category Breakdown */}
           <View style={styles.sectionHeaderRow}>
@@ -850,98 +646,26 @@ export default function DashboardScreen() {
           onClose={() => setProfileModalVisible(false)}
         />
 
-        {/* Flat List Bottom Sheet Modal */}
-        <Modal visible={listModalVisible} transparent animationType="slide">
-          <TouchableOpacity
-            style={styles.modalOverlay}
-            activeOpacity={1}
-            onPress={() => setListModalVisible(false)}
-          >
-            <TouchableWithoutFeedback>
-              <View style={styles.flatListModalContainer}>
-                <View style={styles.sheetHandle} />
+        {/* Extracted Flat List Bottom Sheet Modal */}
+        <TransactionListModal
+          visible={listModalVisible}
+          listType={listModalType}
+          selectedMonth={selectedMonth}
+          monthNames={MONTH_NAMES}
+          transactions={listModalTransactions}
+          loading={loadingListModal}
+          onClose={() => setListModalVisible(false)}
+          onSelectTransaction={handleSelectFromFlatList}
+        />
 
-                <View style={styles.flatListHeader}>
-                  <Text style={styles.flatListTitle}>
-                    {listModalType === 'INCOME' && 'All Income (High to Low)'}
-                    {listModalType === 'EXPENSE' && 'All Expenses (High to Low)'}
-                    {listModalType === 'FIXED' && 'Fixed Commitments'}
-                    {listModalType === 'FLEXIBLE' && 'Flexible Spending'}
-                  </Text>
-                  <Text style={styles.flatListSubTitle}>
-                    {MONTH_NAMES[selectedMonth] || selectedMonth} • {filteredModalTransactions.length} items
-                  </Text>
-                </View>
-
-                {/* In-Modal Search Input Bar */}
-                <View style={styles.modalSearchBox}>
-                  <Ionicons name="search-outline" size={16} color="#8E8E93" style={{ marginRight: 8 }} />
-                  <TextInput
-                    style={styles.modalSearchInput}
-                    placeholder="Search merchant or description..."
-                    placeholderTextColor="#8E8E93"
-                    value={modalSearchQuery}
-                    onChangeText={setModalSearchQuery}
-                    clearButtonMode="while-editing"
-                  />
-                </View>
-
-                {loadingListModal ? (
-                  <ActivityIndicator size="small" color="#007AFF" style={{ marginVertical: 32 }} />
-                ) : filteredModalTransactions.length === 0 ? (
-                  <View style={styles.emptyCard}>
-                    <Text style={styles.emptyText}>No matching records found.</Text>
-                  </View>
-                ) : (
-                  <ScrollView style={{ maxHeight: 400 }}>
-                    {filteredModalTransactions.map((trx) => (
-                      <TouchableOpacity
-                        key={trx.id}
-                        style={styles.flatTrxRow}
-                        activeOpacity={0.7}
-                        onPress={() => handleSelectFromFlatList(trx)}
-                      >
-                        <View style={styles.flatTrxLeft}>
-                          <View
-                            style={[
-                              styles.categoryBadgeDot,
-                              { backgroundColor: getCategoryColor(trx.category) },
-                            ]}
-                          />
-                          <View style={{ flex: 1 }}>
-                            <Text style={styles.flatTrxMerchant} numberOfLines={1}>
-                              {trx.merchant !== 'Unknown' ? trx.merchant : trx.rawDescription}
-                            </Text>
-                            <Text style={styles.flatTrxMeta}>
-                              {trx.date} • {trx.category}
-                            </Text>
-                          </View>
-                        </View>
-                        <Text
-                          style={[
-                            styles.flatTrxAmount,
-                            { color: trx.amount < 0 ? '#1C1C1E' : '#34C759' },
-                          ]}
-                        >
-                          {trx.amount < 0
-                            ? `-€${Math.abs(trx.amount).toFixed(2)}`
-                            : `+€${trx.amount.toFixed(2)}`}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
-                  </ScrollView>
-                )}
-
-                <TouchableOpacity
-                  style={styles.closeDetailButton}
-                  onPress={() => setListModalVisible(false)}
-                >
-                  <Text style={styles.closeDetailButtonText}>Close</Text>
-                </TouchableOpacity>
-              </View>
-            </TouchableWithoutFeedback>
-          </TouchableOpacity>
-        </Modal>
+        {/* Extracted Transaction Detail Modal */}
+        <TransactionDetailModal
+          visible={selectedTransaction !== null}
+          transaction={selectedTransaction}
+          isFixed={isCurrentTrxFixed}
+          onClose={() => setSelectedTransaction(null)}
+          onToggleFixed={handleToggleFixedCost}
+        />
 
         {/* Action Menu Sheet */}
         <Modal visible={actionMenuVisible} transparent animationType="fade">
@@ -970,93 +694,6 @@ export default function DashboardScreen() {
                   onPress={() => setActionMenuVisible(false)}
                 >
                   <Text style={styles.cancelActionText}>Cancel</Text>
-                </TouchableOpacity>
-              </View>
-            </TouchableWithoutFeedback>
-          </TouchableOpacity>
-        </Modal>
-
-        {/* Transaction Detail Modal */}
-        <Modal visible={selectedTransaction !== null} transparent animationType="slide">
-          <TouchableOpacity
-            style={styles.modalOverlay}
-            activeOpacity={1}
-            onPress={() => setSelectedTransaction(null)}
-          >
-            <TouchableWithoutFeedback>
-              <View style={styles.detailCardContainer}>
-                <View style={styles.sheetHandle} />
-                <Text style={styles.detailCardTitle}>Transaction Details</Text>
-
-                {selectedTransaction && (
-                  <View style={styles.detailContent}>
-                    <View style={styles.detailAmountGroup}>
-                      <Text style={styles.detailAmountLabel}>AMOUNT</Text>
-                      <Text
-                        style={[
-                          styles.detailAmountValue,
-                          { color: selectedTransaction.amount < 0 ? '#1C1C1E' : '#34C759' },
-                        ]}
-                      >
-                        {selectedTransaction.amount < 0
-                          ? `-€${Math.abs(selectedTransaction.amount).toFixed(2)}`
-                          : `+€${selectedTransaction.amount.toFixed(2)}`}
-                      </Text>
-                    </View>
-
-                    <View style={styles.detailRow}>
-                      <Text style={styles.detailLabel}>Merchant</Text>
-                      <Text style={styles.detailValue}>{selectedTransaction.merchant}</Text>
-                    </View>
-
-                    <View style={styles.detailRow}>
-                      <Text style={styles.detailLabel}>Full Description</Text>
-                      <Text style={styles.detailValueSelectable} selectable>
-                        {selectedTransaction.rawDescription}
-                      </Text>
-                    </View>
-
-                    <View style={styles.detailRow}>
-                      <Text style={styles.detailLabel}>Date</Text>
-                      <Text style={styles.detailValue}>{selectedTransaction.date}</Text>
-                    </View>
-
-                    <View style={styles.detailRow}>
-                      <Text style={styles.detailLabel}>Category</Text>
-                      <View style={styles.detailCategoryBadge}>
-                        <View
-                          style={[
-                            styles.colorDot,
-                            { backgroundColor: getCategoryColor(selectedTransaction.category) },
-                          ]}
-                        />
-                        <Text style={styles.detailCategoryText}>{selectedTransaction.category}</Text>
-                      </View>
-                    </View>
-
-                    {/* Fixed / Recurring Switch Toggle */}
-                    <View style={styles.toggleRow}>
-                      <View style={{ flex: 1, marginRight: 12 }}>
-                        <Text style={styles.toggleTitle}>Mark as Fixed / Recurring</Text>
-                        <Text style={styles.toggleSubtitle}>
-                          Treat matches for "{selectedTransaction.merchant !== 'Unknown' ? selectedTransaction.merchant : 'this item'}" as fixed monthly commitments.
-                        </Text>
-                      </View>
-                      <Switch
-                        value={isCurrentTrxFixed}
-                        onValueChange={handleToggleFixedCost}
-                        trackColor={{ false: '#E5E5EA', true: '#007AFF' }}
-                        thumbColor="#FFFFFF"
-                      />
-                    </View>
-                  </View>
-                )}
-
-                <TouchableOpacity
-                  style={styles.closeDetailButton}
-                  onPress={() => setSelectedTransaction(null)}
-                >
-                  <Text style={styles.closeDetailButtonText}>Close</Text>
                 </TouchableOpacity>
               </View>
             </TouchableWithoutFeedback>
@@ -1145,186 +782,8 @@ const styles = StyleSheet.create({
   },
   goalsHeaderText: { fontSize: 13, fontWeight: '600', color: '#007AFF' },
 
-  // Month Stepper Navigation
-  monthNavRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: '#FFF',
-    borderRadius: 14,
-    paddingHorizontal: 8,
-    paddingVertical: 6,
-    marginBottom: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.03,
-    shadowRadius: 4,
-    elevation: 1,
-  },
-  navButton: {
-    width: 34,
-    height: 34,
-    borderRadius: 10,
-    backgroundColor: '#F2F2F7',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  navButtonDisabled: { backgroundColor: '#F9F9F9' },
-  monthTitleButton: { flexDirection: 'row', alignItems: 'center', paddingVertical: 4, paddingHorizontal: 8 },
-  monthLabelText: { fontSize: 16, fontWeight: '700', color: '#1C1C1E' },
-
-  // Coverage Status Badge
-  coverageBadgeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    alignSelf: 'center',
-    backgroundColor: '#FFF',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 10,
-    marginBottom: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.02,
-    shadowRadius: 2,
-    elevation: 1,
-  },
-  coverageDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    marginRight: 6,
-  },
-  coverageText: {
-    fontSize: 11,
-    fontWeight: '600',
-  },
-
-  // Hero Summary Cards
-  summaryContainer: { marginBottom: 12 },
-  cardRow: { flexDirection: 'row', gap: 12 },
-  card: { flex: 1, padding: 16, borderRadius: 16, backgroundColor: '#FFF' },
-  cardHeaderWithIcon: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
-  incomeCard: { borderLeftWidth: 4, borderLeftColor: '#34C759' },
-  expenseCard: { borderLeftWidth: 4, borderLeftColor: '#FF3B30' },
-  cardLabel: { fontSize: 11, color: '#8E8E93', fontWeight: '700', letterSpacing: 0.5 },
-  incomeText: { fontSize: 18, fontWeight: '700', color: '#34C759' },
-  expenseText: { fontSize: 18, fontWeight: '700', color: '#FF3B30' },
-  netCard: {
-    marginTop: 12,
-    padding: 16,
-    borderRadius: 16,
-    backgroundColor: '#FFF',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  netLabel: { fontSize: 11, fontWeight: '700', color: '#8E8E93', letterSpacing: 0.5 },
-  netSubtext: { fontSize: 11, color: '#8E8E93', marginTop: 2 },
-  netText: { fontSize: 20, fontWeight: '800' },
-
-  // Fixed vs Flexible Card
-  fixedCard: {
-    backgroundColor: '#FFF',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.03,
-    shadowRadius: 4,
-    elevation: 1,
-  },
-  fixedCardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  fixedHeaderLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  fixedCardTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#1C1C1E',
-  },
-  fixedCardSub: {
-    fontSize: 11,
-    color: '#8E8E93',
-  },
-  splitTrack: {
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: '#E5E5EA',
-    flexDirection: 'row',
-    overflow: 'hidden',
-    marginBottom: 12,
-  },
-  fixedFill: {
-    height: '100%',
-    backgroundColor: '#007AFF',
-  },
-  flexibleFill: {
-    height: '100%',
-    backgroundColor: '#34C759',
-  },
-  splitLabelsRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  splitLegendItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  legendDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    marginRight: 6,
-  },
-  splitLabelText: {
-    fontSize: 12,
-    color: '#8E8E93',
-    fontWeight: '500',
-  },
-  splitValText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#1C1C1E',
-  },
-
-  chartCard: {
-    backgroundColor: '#FFF',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.03,
-    shadowRadius: 4,
-    elevation: 1,
-  },
-  chartHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
-  sectionTitle: { fontSize: 16, fontWeight: '600', color: '#1C1C1E' },
-  resetFilterText: { fontSize: 12, color: '#007AFF', fontWeight: '500' },
-  chartWrapper: { alignItems: 'center', paddingTop: 6, paddingBottom: 4 },
-  barTopLabelContainer: {
-    width: 48,
-    marginLeft: -12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  barTopLabel: {
-    fontSize: 10,
-    fontWeight: '600',
-    color: '#8E8E93',
-    marginBottom: 2,
-    textAlign: 'center',
-  },
   sectionHeaderRow: { marginBottom: 10 },
+  sectionTitle: { fontSize: 16, fontWeight: '600', color: '#1C1C1E' },
   categoryCardList: {
     backgroundColor: '#FFF',
     borderRadius: 16,
@@ -1433,9 +892,6 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
   },
 
-  emptyCard: { backgroundColor: '#FFF', borderRadius: 16, padding: 24, alignItems: 'center' },
-  emptyText: { fontSize: 13, color: '#8E8E93' },
-
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
   sheetContainer: {
     backgroundColor: '#FFF',
@@ -1461,40 +917,6 @@ const styles = StyleSheet.create({
   sheetItemText: { fontSize: 16, fontWeight: '500', color: '#1C1C1E' },
   sheetItemTextActive: { color: '#007AFF', fontWeight: '700' },
 
-  flatListModalContainer: {
-    backgroundColor: '#FFF',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    padding: 20,
-    paddingBottom: 34,
-  },
-  flatListHeader: { alignItems: 'center', marginBottom: 12 },
-  flatListTitle: { fontSize: 18, fontWeight: '700', color: '#1C1C1E' },
-  flatListSubTitle: { fontSize: 12, color: '#8E8E93', marginTop: 2 },
-  modalSearchBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F2F2F7',
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    marginBottom: 12,
-  },
-  modalSearchInput: { flex: 1, fontSize: 14, color: '#1C1C1E' },
-  flatTrxRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#E5E5EA',
-  },
-  flatTrxLeft: { flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 8 },
-  categoryBadgeDot: { width: 8, height: 8, borderRadius: 4, marginRight: 10 },
-  flatTrxMerchant: { fontSize: 14, fontWeight: '600', color: '#1C1C1E' },
-  flatTrxMeta: { fontSize: 11, color: '#8E8E93', marginTop: 2 },
-  flatTrxAmount: { fontSize: 14, fontWeight: '700' },
-
   actionSheetContainer: {
     backgroundColor: '#FFF',
     borderTopLeftRadius: 24,
@@ -1513,52 +935,4 @@ const styles = StyleSheet.create({
   actionSheetItemText: { fontSize: 16, fontWeight: '600', color: '#1C1C1E' },
   cancelActionItem: { justifyContent: 'center', marginTop: 8, borderBottomWidth: 0 },
   cancelActionText: { fontSize: 16, fontWeight: '600', color: '#8E8E93' },
-
-  detailCardContainer: {
-    backgroundColor: '#FFF',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    padding: 20,
-    paddingBottom: 34,
-  },
-  detailCardTitle: { fontSize: 18, fontWeight: '700', color: '#1C1C1E', textAlign: 'center', marginBottom: 16 },
-  detailContent: { marginVertical: 8 },
-  detailAmountGroup: { alignItems: 'center', marginBottom: 20 },
-  detailAmountLabel: { fontSize: 10, fontWeight: '700', color: '#8E8E93', letterSpacing: 0.5 },
-  detailAmountValue: { fontSize: 26, fontWeight: '800', marginTop: 2 },
-  detailRow: { marginBottom: 14 },
-  detailLabel: { fontSize: 12, color: '#8E8E93', fontWeight: '500', marginBottom: 4 },
-  detailValue: { fontSize: 15, fontWeight: '600', color: '#1C1C1E' },
-  detailValueSelectable: { fontSize: 15, fontWeight: '500', color: '#1C1C1E', lineHeight: 20 },
-  detailCategoryBadge: { flexDirection: 'row', alignItems: 'center', marginTop: 2 },
-  detailCategoryText: { fontSize: 14, fontWeight: '600', color: '#1C1C1E' },
-  toggleRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: '#F2F2F7',
-    borderRadius: 12,
-    padding: 12,
-    marginTop: 8,
-    marginBottom: 12,
-  },
-  toggleTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#1C1C1E',
-  },
-  toggleSubtitle: {
-    fontSize: 11,
-    color: '#8E8E93',
-    marginTop: 2,
-    lineHeight: 15,
-  },
-  closeDetailButton: {
-    backgroundColor: '#F2F2F7',
-    borderRadius: 12,
-    paddingVertical: 12,
-    alignItems: 'center',
-    marginTop: 12,
-  },
-  closeDetailButtonText: { fontSize: 15, fontWeight: '700', color: '#007AFF' },
 });

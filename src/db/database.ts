@@ -284,18 +284,6 @@ export async function getFixedVsFlexibleSummary(
   }
 }
 
-export async function addFixedCostRule(
-  db: SQLiteDatabase,
-  keyword: string,
-  category: string = 'Subscriptions & Bills',
-  profileId: number = 1
-): Promise<void> {
-  await db.runAsync(
-    `INSERT OR REPLACE INTO fixed_cost_rules (profileId, keyword, category) VALUES (?, ?, ?);`,
-    [profileId, keyword.toUpperCase(), category]
-  );
-}
-
 // Category Goals Management
 export async function getCategoryGoalsWithProgress(
   db: SQLiteDatabase,
@@ -842,4 +830,97 @@ export async function getFixedOrFlexibleTransactions(
     console.error('Error in getFixedOrFlexibleTransactions:', error);
     return [];
   }
+}
+
+export interface RecurringCandidate {
+  merchant: string;
+  category: string;
+  occurrenceCount: number;
+  averageAmount: number;
+}
+
+export async function getRecurringCandidates(
+  db: SQLiteDatabase,
+  profileId: number
+): Promise<RecurringCandidate[]> {
+  const candidates = await db.getAllAsync<RecurringCandidate>(
+    `SELECT 
+       merchant,
+       category,
+       COUNT(DISTINCT monthName) as occurrenceCount,
+       AVG(ABS(amount)) as averageAmount
+     FROM transactions
+     WHERE profileId = ?
+       AND merchant != 'Unknown'
+       AND merchant NOT IN (
+         SELECT DISTINCT keyword FROM fixed_cost_rules WHERE profileId = ?
+       )
+     GROUP BY merchant
+     HAVING occurrenceCount >= 2
+     ORDER BY occurrenceCount DESC, averageAmount DESC
+     LIMIT 5;`,
+    [profileId, profileId]
+  );
+  return candidates || [];
+}
+
+export async function addFixedCostRule(
+  db: SQLiteDatabase,
+  keyword: string,
+  category: string,
+  profileId: number
+): Promise<void> {
+  const existing = await db.getFirstAsync<{ id: number }>(
+    `SELECT id FROM fixed_cost_rules WHERE keyword = ? AND profileId = ?;`,
+    [keyword, profileId]
+  );
+
+  if (!existing) {
+    await db.runAsync(
+      `INSERT INTO fixed_cost_rules (keyword, category, profileId) VALUES (?, ?, ?);`,
+      [keyword, category, profileId]
+    );
+  }
+}
+
+export async function getCategoryFixedVsFlexibleSummary(
+  db: SQLiteDatabase,
+  monthName: string,
+  category: string,
+  profileId: number
+): Promise<FixedCostSummary> {
+  const isAll = category === 'All';
+
+  const categoryFilter = isAll ? '' : 'AND category = ?';
+
+  const query = `
+    SELECT 
+      SUM(CASE WHEN merchant IN (SELECT keyword FROM fixed_cost_rules WHERE profileId = ?) THEN ABS(amount) ELSE 0 END) as fixedTotal,
+      SUM(CASE WHEN merchant NOT IN (SELECT keyword FROM fixed_cost_rules WHERE profileId = ?) THEN ABS(amount) ELSE 0 END) as flexibleTotal,
+      COUNT(CASE WHEN merchant IN (SELECT keyword FROM fixed_cost_rules WHERE profileId = ?) THEN 1 END) as fixedCount
+    FROM transactions
+    WHERE profileId = ? AND monthName = ? ${categoryFilter};
+  `;
+
+  const queryParams = isAll
+    ? [profileId, profileId, profileId, profileId, monthName]
+    : [profileId, profileId, profileId, profileId, monthName, category];
+
+  const result = await db.getFirstAsync<{
+    fixedTotal: number;
+    flexibleTotal: number;
+    fixedCount: number;
+  }>(query, queryParams);
+
+  const fixedTotal = result?.fixedTotal || 0;
+  const flexibleTotal = result?.flexibleTotal || 0;
+  const total = fixedTotal + flexibleTotal;
+
+  return {
+    fixedTotal,
+    flexibleTotal,
+    fixedPercentage: total > 0 ? Math.round((fixedTotal / total) * 100) : 0,
+    flexiblePercentage: total > 0 ? Math.round((flexibleTotal / total) * 100) : 0,
+    fixedItemsCount: result?.fixedCount || 0,
+  };
 }
