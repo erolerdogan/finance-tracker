@@ -65,6 +65,20 @@ function formatCompactCurrency(val: number): string {
   return `€${Math.round(val)}`;
 }
 
+const getCurrentMonthKey = (): string => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  return `${year}-${month}`;
+};
+
+interface MonthCoverageStatus {
+  status: 'IN_PROGRESS' | 'PARTIAL' | 'COMPLETE' | 'EMPTY';
+  minDate?: string;
+  maxDate?: string;
+  label: string;
+}
+
 export default function DashboardScreen() {
   const router = useRouter();
   const db = useSQLiteContext();
@@ -95,6 +109,10 @@ export default function DashboardScreen() {
   const [availableMonths, setAvailableMonths] = useState<string[]>([]);
   const [selectedMonth, setSelectedMonth] = useState<string>('');
   const [typeFilter, setTypeFilter] = useState<'ALL' | 'INCOME' | 'EXPENSE'>('ALL');
+  const [coverageStatus, setCoverageStatus] = useState<MonthCoverageStatus>({
+    status: 'EMPTY',
+    label: '',
+  });
 
   // Dashboard Data
   const [summary, setSummary] = useState<MonthlySummary>({
@@ -117,19 +135,20 @@ export default function DashboardScreen() {
   const [categoryTransactionsMap, setCategoryTransactionsMap] = useState<Record<string, Transaction[]>>({});
   const [loadingTransactionsMap, setLoadingTransactionsMap] = useState<Record<string, boolean>>({});
 
+  const currentMonthKey = getCurrentMonthKey();
+
   const loadDashboardData = useCallback(async () => {
     if (!db) return;
     try {
       setLoading(true);
 
       const dbMonths = await getAvailableMonths(db, activeProfileId);
-      const monthsList =
-        dbMonths.length > 0
-          ? dbMonths
-          : [
-              '2026-08', '2026-07', '2026-06', '2026-05',
-              '2026-04', '2026-03', '2026-02', '2026-01',
-            ];
+
+      // Proactive Awaiting Month Logic
+      let monthsList = dbMonths.length > 0 ? [...dbMonths] : [currentMonthKey];
+      if (!monthsList.includes(currentMonthKey)) {
+        monthsList = [currentMonthKey, ...monthsList];
+      }
 
       setAvailableMonths(monthsList);
 
@@ -141,22 +160,57 @@ export default function DashboardScreen() {
         setSelectedMonth(activeMonth);
       }
 
-      const [summaryRes, categoryRes, fixedRes] = await Promise.all([
+      const [summaryRes, categoryRes, fixedRes, dateRangeRes] = await Promise.all([
         getMonthlySummary(db, activeMonth, activeProfileId),
         getMonthlyCategoryTotals(db, activeMonth, activeProfileId),
         getFixedVsFlexibleSummary(db, activeMonth, activeProfileId),
+        db.getFirstAsync<{ minDate: string; maxDate: string }>(
+          `SELECT MIN(date) as minDate, MAX(date) as maxDate FROM transactions WHERE monthName = ? AND profileId = ?;`,
+          [activeMonth, activeProfileId]
+        ),
       ]);
 
       setSummary(summaryRes);
       setCategoryData(categoryRes || []);
       setFixedSummary(fixedRes);
+
+      // Compute Month Coverage Status
+      if (!dateRangeRes || !dateRangeRes.minDate) {
+        setCoverageStatus({ status: 'EMPTY', label: 'Statement Pending' });
+      } else {
+        const isCurrentMonth = activeMonth === currentMonthKey;
+        const maxDay = parseInt(dateRangeRes.maxDate.slice(-2), 10);
+
+        if (isCurrentMonth) {
+          setCoverageStatus({
+            status: 'IN_PROGRESS',
+            minDate: dateRangeRes.minDate,
+            maxDate: dateRangeRes.maxDate,
+            label: `In Progress (${dateRangeRes.minDate.slice(5)} – ${dateRangeRes.maxDate.slice(5)})`,
+          });
+        } else if (maxDay < 25) {
+          setCoverageStatus({
+            status: 'PARTIAL',
+            minDate: dateRangeRes.minDate,
+            maxDate: dateRangeRes.maxDate,
+            label: `Partial Statement (${dateRangeRes.minDate.slice(5)} – ${dateRangeRes.maxDate.slice(5)})`,
+          });
+        } else {
+          setCoverageStatus({
+            status: 'COMPLETE',
+            minDate: dateRangeRes.minDate,
+            maxDate: dateRangeRes.maxDate,
+            label: `Full Statement (${dateRangeRes.minDate.slice(5)} – ${dateRangeRes.maxDate.slice(5)})`,
+          });
+        }
+      }
     } catch (error) {
       console.error('Failed to query dashboard data:', error);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [db, selectedMonth, activeProfileId]);
+  }, [db, selectedMonth, activeProfileId, currentMonthKey]);
 
   useFocusEffect(
     useCallback(() => {
@@ -192,7 +246,6 @@ export default function DashboardScreen() {
     setCategoryTransactionsMap({});
   };
 
-  // Select transaction & evaluate fixed status
   const handleSelectTransaction = async (trx: Transaction) => {
     setSelectedTransaction(trx);
     if (db && trx) {
@@ -202,7 +255,6 @@ export default function DashboardScreen() {
     }
   };
 
-  // Safe multi-modal transition handler (prevents UI lockup)
   const handleSelectFromFlatList = (trx: Transaction) => {
     setListModalVisible(false);
     setTimeout(() => {
@@ -210,7 +262,6 @@ export default function DashboardScreen() {
     }, 200);
   };
 
-  // Toggle fixed cost switch handler with deferred async re-queries
   const handleToggleFixedCost = async () => {
     if (!db || !selectedTransaction) return;
     const keyword =
@@ -238,7 +289,6 @@ export default function DashboardScreen() {
     }, 100);
   };
 
-  // Open Flat List Dialog
   const handleOpenCardModal = async (type: 'INCOME' | 'EXPENSE' | 'FIXED' | 'FLEXIBLE') => {
     setListModalType(type);
     setModalSearchQuery('');
@@ -267,7 +317,6 @@ export default function DashboardScreen() {
     }
   };
 
-  // Fetch category sub-items
   const fetchCategoryTransactions = async (catName: string) => {
     if (categoryTransactionsMap[catName] || !db) return;
     try {
@@ -300,7 +349,6 @@ export default function DashboardScreen() {
     }
   };
 
-  // Import Action
   const handleImportFile = async () => {
     if (isPickingRef.current) return;
     isPickingRef.current = true;
@@ -517,24 +565,29 @@ export default function DashboardScreen() {
             </TouchableOpacity>
           </View>
 
-          {/* Import Status Indicator Badge */}
-          <View style={styles.importStatusBadge}>
-            <Ionicons
-              name={categoryData.length > 0 ? 'checkmark-circle' : 'alert-circle-outline'}
-              size={14}
-              color={categoryData.length > 0 ? '#34C759' : '#FF9500'}
-            />
-            <Text
-              style={[
-                styles.importStatusText,
-                { color: categoryData.length > 0 ? '#28A745' : '#D97706' },
-              ]}
-            >
-              {categoryData.length > 0
-                ? `${MONTH_NAMES[selectedMonth] || selectedMonth}: Up to date ✓`
-                : `${MONTH_NAMES[selectedMonth] || selectedMonth}: Statement pending`}
-            </Text>
-          </View>
+          {/* Month Statement Coverage Status Badge */}
+          {coverageStatus.status !== 'EMPTY' && (
+            <View style={styles.coverageBadgeRow}>
+              <View
+                style={[
+                  styles.coverageDot,
+                  coverageStatus.status === 'IN_PROGRESS' && { backgroundColor: '#FF9500' },
+                  coverageStatus.status === 'PARTIAL' && { backgroundColor: '#FF3B30' },
+                  coverageStatus.status === 'COMPLETE' && { backgroundColor: '#34C759' },
+                ]}
+              />
+              <Text
+                style={[
+                  styles.coverageText,
+                  coverageStatus.status === 'IN_PROGRESS' && { color: '#D97706' },
+                  coverageStatus.status === 'PARTIAL' && { color: '#DC2626' },
+                  coverageStatus.status === 'COMPLETE' && { color: '#16A34A' },
+                ]}
+              >
+                {coverageStatus.label}
+              </Text>
+            </View>
+          )}
 
           {/* Hero Summary Cards */}
           <View style={styles.summaryContainer}>
@@ -677,8 +730,25 @@ export default function DashboardScreen() {
           {loading && !refreshing ? (
             <ActivityIndicator size="small" color="#007AFF" style={{ marginTop: 24 }} />
           ) : displayedCategories.length === 0 ? (
-            <View style={styles.emptyCard}>
-              <Text style={styles.emptyText}>No expenses for this month</Text>
+            /* Awaiting Statement Call-To-Action Empty State Card */
+            <View style={styles.pendingCard}>
+              <View style={styles.pendingIconCircle}>
+                <Ionicons name="document-text-outline" size={26} color="#007AFF" />
+              </View>
+              <Text style={styles.pendingTitle}>
+                {MONTH_NAMES[selectedMonth] || selectedMonth} Statement Pending
+              </Text>
+              <Text style={styles.pendingSubtext}>
+                No transactions uploaded for this month yet. Import a CSV or Excel statement to populate your overview.
+              </Text>
+              <TouchableOpacity
+                style={styles.pendingImportBtn}
+                activeOpacity={0.8}
+                onPress={handleImportFile}
+              >
+                <Ionicons name="cloud-upload-outline" size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
+                <Text style={styles.pendingImportBtnText}>Import Statement</Text>
+              </TouchableOpacity>
             </View>
           ) : (
             <View style={styles.categoryCardList}>
@@ -780,7 +850,7 @@ export default function DashboardScreen() {
           onClose={() => setProfileModalVisible(false)}
         />
 
-        {/* Flat List Bottom Sheet Modal (Income, Expenses, Fixed, Flexible) */}
+        {/* Flat List Bottom Sheet Modal */}
         <Modal visible={listModalVisible} transparent animationType="slide">
           <TouchableOpacity
             style={styles.modalOverlay}
@@ -906,7 +976,7 @@ export default function DashboardScreen() {
           </TouchableOpacity>
         </Modal>
 
-        {/* Transaction Detail Modal with Fixed/Recurring Switch Toggle */}
+        {/* Transaction Detail Modal */}
         <Modal visible={selectedTransaction !== null} transparent animationType="slide">
           <TouchableOpacity
             style={styles.modalOverlay}
@@ -1084,7 +1154,7 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     paddingHorizontal: 8,
     paddingVertical: 6,
-    marginBottom: 10,
+    marginBottom: 8,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.03,
@@ -1103,26 +1173,31 @@ const styles = StyleSheet.create({
   monthTitleButton: { flexDirection: 'row', alignItems: 'center', paddingVertical: 4, paddingHorizontal: 8 },
   monthLabelText: { fontSize: 16, fontWeight: '700', color: '#1C1C1E' },
 
-  // Import Status Badge
-  importStatusBadge: {
+  // Coverage Status Badge
+  coverageBadgeRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    alignSelf: 'flex-start',
+    alignSelf: 'center',
     backgroundColor: '#FFF',
     paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingVertical: 4,
     borderRadius: 10,
     marginBottom: 16,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.03,
-    shadowRadius: 3,
+    shadowOpacity: 0.02,
+    shadowRadius: 2,
     elevation: 1,
   },
-  importStatusText: {
-    fontSize: 12,
+  coverageDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    marginRight: 6,
+  },
+  coverageText: {
+    fontSize: 11,
     fontWeight: '600',
-    marginLeft: 6,
   },
 
   // Hero Summary Cards
@@ -1308,6 +1383,55 @@ const styles = StyleSheet.create({
   trxDate: { fontSize: 10, color: '#8E8E93', marginTop: 1 },
   trxAmount: { fontSize: 13, fontWeight: '600' },
   noTransactionsText: { fontSize: 12, color: '#8E8E93', fontStyle: 'italic', paddingVertical: 4 },
+
+  pendingCard: {
+    backgroundColor: '#FFF',
+    borderRadius: 18,
+    padding: 24,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  pendingIconCircle: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: '#E6F0FF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  pendingTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#1C1C1E',
+    marginBottom: 6,
+    textAlign: 'center',
+  },
+  pendingSubtext: {
+    fontSize: 13,
+    color: '#8E8E93',
+    textAlign: 'center',
+    lineHeight: 18,
+    marginBottom: 18,
+    paddingHorizontal: 8,
+  },
+  pendingImportBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#007AFF',
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    borderRadius: 12,
+  },
+  pendingImportBtnText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
 
   emptyCard: { backgroundColor: '#FFF', borderRadius: 16, padding: 24, alignItems: 'center' },
   emptyText: { fontSize: 13, color: '#8E8E93' },
