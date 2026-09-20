@@ -1,3 +1,4 @@
+import { ProfileSwitcherModal } from '@/components/ProfileSwitcherModal';
 import { getCategoryColor } from '@/constants/colors';
 import {
   CategoryTotal,
@@ -10,7 +11,10 @@ import {
   getMonthlyCategoryTotals,
   getMonthlySummary,
   getTransactionsByMonthAndCategory,
-  insertTransactions, isTransactionFixed, MonthlySummary, toggleFixedCostRule,
+  insertTransactions,
+  isTransactionFixed,
+  MonthlySummary,
+  toggleFixedCostRule,
   Transaction
 } from '@/db/database';
 import { cancelCurrentMonthReminders } from '@/utils/notifications';
@@ -37,6 +41,7 @@ import {
 } from 'react-native';
 import { BarChart } from 'react-native-gifted-charts';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useProfile } from '../../contexts/ProfileContext';
 
 const MONTH_NAMES: Record<string, string> = {
   '2026-01': 'January 2026',
@@ -63,6 +68,9 @@ function formatCompactCurrency(val: number): string {
 export default function DashboardScreen() {
   const router = useRouter();
   const db = useSQLiteContext();
+  const { activeProfile } = useProfile();
+  const activeProfileId = activeProfile?.id ?? 1;
+
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -72,6 +80,7 @@ export default function DashboardScreen() {
   // Modals & Selection State
   const [monthPickerVisible, setMonthPickerVisible] = useState(false);
   const [actionMenuVisible, setActionMenuVisible] = useState(false);
+  const [profileModalVisible, setProfileModalVisible] = useState(false);
   const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
   const [isCurrentTrxFixed, setIsCurrentTrxFixed] = useState(false);
 
@@ -113,7 +122,7 @@ export default function DashboardScreen() {
     try {
       setLoading(true);
 
-      const dbMonths = await getAvailableMonths(db);
+      const dbMonths = await getAvailableMonths(db, activeProfileId);
       const monthsList =
         dbMonths.length > 0
           ? dbMonths
@@ -133,9 +142,9 @@ export default function DashboardScreen() {
       }
 
       const [summaryRes, categoryRes, fixedRes] = await Promise.all([
-        getMonthlySummary(db, activeMonth),
-        getMonthlyCategoryTotals(db, activeMonth),
-        getFixedVsFlexibleSummary(db, activeMonth),
+        getMonthlySummary(db, activeMonth, activeProfileId),
+        getMonthlyCategoryTotals(db, activeMonth, activeProfileId),
+        getFixedVsFlexibleSummary(db, activeMonth, activeProfileId),
       ]);
 
       setSummary(summaryRes);
@@ -147,7 +156,7 @@ export default function DashboardScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [db, selectedMonth]);
+  }, [db, selectedMonth, activeProfileId]);
 
   useFocusEffect(
     useCallback(() => {
@@ -188,8 +197,7 @@ export default function DashboardScreen() {
     setSelectedTransaction(trx);
     if (db && trx) {
       const keyword = trx.merchant !== 'Unknown' ? trx.merchant : trx.rawDescription;
-      // Evaluates against defaults + custom rules + recurring pattern engine
-      const isFixed = await isTransactionFixed(db, keyword);
+      const isFixed = await isTransactionFixed(db, keyword, activeProfileId);
       setIsCurrentTrxFixed(isFixed);
     }
   };
@@ -210,14 +218,19 @@ export default function DashboardScreen() {
         ? selectedTransaction.merchant
         : selectedTransaction.rawDescription;
 
-    const newState = await toggleFixedCostRule(db, keyword, selectedTransaction.category);
+    const newState = await toggleFixedCostRule(db, keyword, selectedTransaction.category, activeProfileId);
     setIsCurrentTrxFixed(newState);
 
     setTimeout(async () => {
       if (listModalVisible) {
         if (listModalType === 'FIXED' || listModalType === 'FLEXIBLE') {
           const isFixedTarget = listModalType === 'FIXED';
-          const updatedItems = await getFixedOrFlexibleTransactions(db, selectedMonth, isFixedTarget);
+          const updatedItems = await getFixedOrFlexibleTransactions(
+            db,
+            selectedMonth,
+            isFixedTarget,
+            activeProfileId
+          );
           setListModalTransactions(updatedItems);
         }
       }
@@ -237,9 +250,9 @@ export default function DashboardScreen() {
 
       let items: Transaction[] = [];
       if (type === 'FIXED' || type === 'FLEXIBLE') {
-        items = await getFixedOrFlexibleTransactions(db, selectedMonth, type === 'FIXED');
+        items = await getFixedOrFlexibleTransactions(db, selectedMonth, type === 'FIXED', activeProfileId);
       } else {
-        items = await getFilteredTransactions(db, selectedMonth, type);
+        items = await getFilteredTransactions(db, selectedMonth, type, activeProfileId);
       }
 
       const sortedItems = [...(items || [])].sort(
@@ -259,7 +272,7 @@ export default function DashboardScreen() {
     if (categoryTransactionsMap[catName] || !db) return;
     try {
       setLoadingTransactionsMap((prev) => ({ ...prev, [catName]: true }));
-      const items = await getTransactionsByMonthAndCategory(db, selectedMonth, catName);
+      const items = await getTransactionsByMonthAndCategory(db, selectedMonth, catName, activeProfileId);
       setCategoryTransactionsMap((prev) => ({ ...prev, [catName]: items || [] }));
     } catch (error) {
       console.error(`Failed to load transactions for ${catName}:`, error);
@@ -349,10 +362,10 @@ export default function DashboardScreen() {
           return;
         }
 
-        await insertTransactions(db, parsedTransactions);
+        await insertTransactions(db, parsedTransactions, activeProfileId);
         await cancelCurrentMonthReminders();
 
-        Alert.alert('Success', `Successfully imported ${parsedTransactions.length} transactions!`);
+        Alert.alert('Success', `Successfully imported ${parsedTransactions.length} transactions for ${activeProfile?.name || 'this profile'}!`);
         await loadDashboardData();
       } catch (error: any) {
         console.error('File import failed:', error);
@@ -367,8 +380,8 @@ export default function DashboardScreen() {
   const handleResetDatabase = () => {
     setActionMenuVisible(false);
     Alert.alert(
-      'Reset Database',
-      'Are you sure you want to delete all imported transactions? This action cannot be undone.',
+      'Reset Profile Transactions',
+      `Are you sure you want to delete all imported transactions for ${activeProfile?.name || 'this profile'}? This action cannot be undone.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -377,7 +390,7 @@ export default function DashboardScreen() {
           onPress: async () => {
             try {
               setLoading(true);
-              await clearAllTransactions(db);
+              await clearAllTransactions(db, activeProfileId);
               await loadDashboardData();
             } catch (error) {
               console.error('Failed to reset DB:', error);
@@ -443,9 +456,24 @@ export default function DashboardScreen() {
           contentContainerStyle={styles.content}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />}
         >
-          {/* Header Bar */}
+          {/* Header Bar with Active Profile Pill */}
           <View style={styles.headerRow}>
-            <Text style={styles.title}>Dashboard</Text>
+            <View style={styles.headerLeftGroup}>
+              <Text style={styles.title}>Dashboard</Text>
+
+              {/* Active Profile Pill Button */}
+              {activeProfile && (
+                <TouchableOpacity
+                  style={[styles.profilePill, { backgroundColor: activeProfile.avatarColor }]}
+                  activeOpacity={0.8}
+                  onPress={() => setProfileModalVisible(true)}
+                >
+                  <Text style={styles.profilePillText}>{activeProfile.name}</Text>
+                  <Ionicons name="chevron-down" size={12} color="#FFFFFF" style={{ marginLeft: 4 }} />
+                </TouchableOpacity>
+              )}
+            </View>
+
             <TouchableOpacity
               style={styles.goalsHeaderButton}
               onPress={() => router.push('/goals')}
@@ -746,6 +774,12 @@ export default function DashboardScreen() {
           <Ionicons name="options-outline" size={24} color="#FFFFFF" />
         </TouchableOpacity>
 
+        {/* Profile Switcher Bottom Sheet Modal */}
+        <ProfileSwitcherModal
+          visible={profileModalVisible}
+          onClose={() => setProfileModalVisible(false)}
+        />
+
         {/* Flat List Bottom Sheet Modal (Income, Expenses, Fixed, Flexible) */}
         <Modal visible={listModalVisible} transparent animationType="slide">
           <TouchableOpacity
@@ -756,7 +790,7 @@ export default function DashboardScreen() {
             <TouchableWithoutFeedback>
               <View style={styles.flatListModalContainer}>
                 <View style={styles.sheetHandle} />
-                
+
                 <View style={styles.flatListHeader}>
                   <Text style={styles.flatListTitle}>
                     {listModalType === 'INCOME' && 'All Income (High to Low)'}
@@ -858,7 +892,7 @@ export default function DashboardScreen() {
 
                 <TouchableOpacity style={styles.actionSheetItem} onPress={handleResetDatabase}>
                   <Ionicons name="trash-outline" size={20} color="#FF3B30" style={{ marginRight: 12 }} />
-                  <Text style={[styles.actionSheetItemText, { color: '#FF3B30' }]}>Reset Database</Text>
+                  <Text style={[styles.actionSheetItemText, { color: '#FF3B30' }]}>Reset Profile Transactions</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
@@ -1013,7 +1047,24 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
+  headerLeftGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
   title: { fontSize: 28, fontWeight: '700', color: '#000', letterSpacing: -0.5 },
+  profilePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 12,
+  },
+  profilePillText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
   goalsHeaderButton: {
     flexDirection: 'row',
     alignItems: 'center',

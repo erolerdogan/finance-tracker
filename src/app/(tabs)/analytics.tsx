@@ -5,9 +5,15 @@ import { useSQLiteContext } from 'expo-sqlite';
 import React, { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
-  RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View
 } from 'react-native';
 import { LineChart } from 'react-native-gifted-charts';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 const CATEGORIES = [
   'All',
@@ -104,134 +110,139 @@ export default function AnalyticsScreen() {
   );
 
   return (
-    <ScrollView
-      style={styles.container}
-      contentContainerStyle={styles.content}
-      refreshControl={
-        <RefreshControl
-          refreshing={refreshing}
-          onRefresh={() => {
-            setRefreshing(true);
-            loadAnalyticsData();
-          }}
-        />
-      }
-    >
-      {/* Title Header Bar */}
-      <View style={styles.headerRow}>
-        <View>
-          <Text style={styles.title}>Analytics</Text>
-          <Text style={styles.subtitle}>Yearly spending trends</Text>
-        </View>
-        <View style={[styles.categoryBadge, { backgroundColor: `${activeColor}15` }]}>
-          <View style={[styles.dot, { backgroundColor: activeColor }]} />
-          <Text style={[styles.badgeText, { color: activeColor }]}>{selectedCategory}</Text>
-        </View>
-      </View>
-
-      {/* Horizontal Filter Pills (Replaces Dropdown) */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={styles.pillScrollView}
-        contentContainerStyle={styles.pillContainer}
-      >
-        {CATEGORIES.map((cat) => {
-          const isActive = selectedCategory === cat;
-          const color = getCategoryColor(cat);
-
-          return (
-            <TouchableOpacity
-              key={cat}
-              activeOpacity={0.7}
-              style={[
-                styles.chipPill,
-                isActive && { backgroundColor: color },
-              ]}
-              onPress={() => setSelectedCategory(cat)}
-            >
-              {!isActive && (
-                <View style={[styles.miniDot, { backgroundColor: color }]} />
-              )}
-              <Text
-                style={[
-                  styles.chipText,
-                  isActive && styles.chipTextActive,
-                ]}
-              >
-                {cat}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
-      </ScrollView>
-
-      {/* Line Graph Card with Dynamic Y-Axis Auto-Scaling */}
-      <View style={styles.chartCard}>
-        <Text style={styles.chartTitle}>2026 Spending Velocity</Text>
-        {loading && !refreshing ? (
-          <ActivityIndicator size="small" color={activeColor} style={{ paddingVertical: 40 }} />
-        ) : (
-          <View style={styles.chartWrapper}>
-            <LineChart
-              key={selectedCategory}
-              data={chartData}
-              maxValue={maxChartValue}
-              noOfSections={3}
-              color={activeColor}
-              thickness={2.5}
-              startFillColor={`${activeColor}33`}
-              endFillColor={`${activeColor}00`}
-              startOpacity={0.3}
-              endOpacity={0.0}
-              areaChart
-              hideDataPoints={false}
-              dataPointsColor={activeColor}
-              dataPointsRadius={4}
-              curved
-              height={140}
-              spacing={24}
-              xAxisThickness={1}
-              yAxisThickness={0}
-              xAxisColor="#E5E5EA"
-              yAxisTextStyle={{ color: '#8E8E93', fontSize: 10 }}
-              xAxisLabelTextStyle={{ color: '#8E8E93', fontSize: 10 }}
+    <SafeAreaView style={styles.safeArea} edges={['top']}>
+      <View style={{ flex: 1 }}>
+        <ScrollView
+          style={styles.container}
+          contentContainerStyle={styles.content}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => {
+                setRefreshing(true);
+                loadAnalyticsData();
+              }}
             />
+          }
+        >
+          {/* Title Header Bar - Identical alignment to Dashboard */}
+          <View style={styles.headerRow}>
+            <View>
+              <Text style={styles.title}>Analytics</Text>
+              <Text style={styles.subtitle}>Yearly spending trends</Text>
+            </View>
+            <View style={[styles.categoryBadge, { backgroundColor: `${activeColor}15` }]}>
+              <View style={[styles.dot, { backgroundColor: activeColor }]} />
+              <Text style={[styles.badgeText, { color: activeColor }]}>{selectedCategory}</Text>
+            </View>
           </View>
-        )}
+
+          {/* Horizontal Filter Pills */}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.pillScrollView}
+            contentContainerStyle={styles.pillContainer}
+          >
+            {CATEGORIES.map((cat) => {
+              const isActive = selectedCategory === cat;
+              const color = getCategoryColor(cat);
+
+              return (
+                <TouchableOpacity
+                  key={cat}
+                  activeOpacity={0.7}
+                  style={[
+                    styles.chipPill,
+                    isActive && { backgroundColor: color },
+                  ]}
+                  onPress={() => setSelectedCategory(cat)}
+                >
+                  {!isActive && (
+                    <View style={[styles.miniDot, { backgroundColor: color }]} />
+                  )}
+                  <Text
+                    style={[
+                      styles.chipText,
+                      isActive && styles.chipTextActive,
+                    ]}
+                  >
+                    {cat}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+
+          {/* Line Graph Card */}
+          <View style={styles.chartCard}>
+            <Text style={styles.chartTitle}>2026 Spending Velocity</Text>
+            {loading && !refreshing ? (
+              <ActivityIndicator size="small" color={activeColor} style={{ paddingVertical: 40 }} />
+            ) : (
+              <View style={styles.chartWrapper}>
+                <LineChart
+                  key={selectedCategory}
+                  data={chartData}
+                  maxValue={maxChartValue}
+                  noOfSections={3}
+                  color={activeColor}
+                  thickness={2.5}
+                  startFillColor={`${activeColor}33`}
+                  endFillColor={`${activeColor}00`}
+                  startOpacity={0.3}
+                  endOpacity={0.0}
+                  areaChart
+                  hideDataPoints={false}
+                  dataPointsColor={activeColor}
+                  dataPointsRadius={4}
+                  curved
+                  height={140}
+                  spacing={24}
+                  xAxisThickness={1}
+                  yAxisThickness={0}
+                  xAxisColor="#E5E5EA"
+                  yAxisTextStyle={{ color: '#8E8E93', fontSize: 10 }}
+                  xAxisLabelTextStyle={{ color: '#8E8E93', fontSize: 10 }}
+                />
+              </View>
+            )}
+          </View>
+
+          {/* Metric Summary Grid */}
+          <View style={styles.grid}>
+            <View style={styles.metricCard}>
+              <Text style={styles.metricLabel}>Total Year Spending</Text>
+              <Text style={[styles.metricValue, { color: activeColor }]}>
+                €{summary.total.toLocaleString('en-US', { maximumFractionDigits: 0 })}
+              </Text>
+            </View>
+
+            <View style={styles.metricCard}>
+              <Text style={styles.metricLabel}>Monthly Average</Text>
+              <Text style={styles.metricValue}>
+                €{summary.average.toLocaleString('en-US', { maximumFractionDigits: 0 })}
+              </Text>
+            </View>
+
+            <View style={styles.metricCard}>
+              <Text style={styles.metricLabel}>Peak Month</Text>
+              <Text style={styles.metricValue}>{summary.highestMonth}</Text>
+            </View>
+
+            <View style={styles.metricCard}>
+              <Text style={styles.metricLabel}>Lowest Month</Text>
+              <Text style={styles.metricValue}>{summary.lowestMonth}</Text>
+            </View>
+          </View>
+        </ScrollView>
       </View>
-
-      {/* Metric Summary Grid */}
-      <View style={styles.grid}>
-        <View style={styles.metricCard}>
-          <Text style={styles.metricLabel}>Total Year Spending</Text>
-          <Text style={[styles.metricValue, { color: activeColor }]}>
-            €{summary.total.toLocaleString('en-US', { maximumFractionDigits: 0 })}
-          </Text>
-        </View>
-
-        <View style={styles.metricCard}>
-          <Text style={styles.metricLabel}>Monthly Average</Text>
-          <Text style={styles.metricValue}>
-            €{summary.average.toLocaleString('en-US', { maximumFractionDigits: 0 })}
-          </Text>
-        </View>
-
-        <View style={styles.metricCard}>
-          <Text style={styles.metricLabel}>Peak Month</Text>
-          <Text style={styles.metricValue}>{summary.highestMonth}</Text>
-        </View>
-
-        <View style={styles.metricCard}>
-          <Text style={styles.metricLabel}>Lowest Month</Text>
-          <Text style={styles.metricValue}>{summary.lowestMonth}</Text>
-        </View>
-      </View>
-    </ScrollView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  safeArea: { flex: 1, backgroundColor: '#F2F2F7' },
   container: { flex: 1, backgroundColor: '#F2F2F7' },
   content: { padding: 20, paddingBottom: 40 },
   headerRow: {
@@ -252,7 +263,7 @@ const styles = StyleSheet.create({
   },
   dot: { width: 8, height: 8, borderRadius: 4, marginRight: 6 },
   badgeText: { fontSize: 12, fontWeight: '600' },
-  
+
   pillScrollView: { marginBottom: 16 },
   pillContainer: { gap: 8, paddingRight: 10 },
   chipPill: {

@@ -1,7 +1,15 @@
 import { SQLiteDatabase } from 'expo-sqlite';
 
+export interface Profile {
+  id: number;
+  name: string;
+  avatarColor: string;
+  isDefault: number;
+}
+
 export interface Transaction {
   id: number;
+  profileId?: number; // Optional so CSV/Excel parsers don't require it prior to insertion
   date: string;
   amount: number; // Signed numeric: negative = Outflow (Expense), positive = Inflow (Income/Refund)
   rawDescription: string;
@@ -21,16 +29,20 @@ export interface CategoryTotal {
 
 export interface CategoryRule {
   id: number;
+  profileId: number;
   keyword: string;
   category: string;
 }
 
 export interface CategoryGoal {
   category: string;
+  profileId: number;
   monthlyLimit: number;
 }
 
-export interface CategoryGoalWithProgress extends CategoryGoal {
+export interface CategoryGoalWithProgress {
+  category: string;
+  monthlyLimit: number;
   spent: number;
   percentage: number;
 }
@@ -64,6 +76,22 @@ export interface MonthlySummary {
   netSavings: number;
 }
 
+export interface DetectedRecurringItem {
+  merchant: string;
+  category: string;
+  averageAmount: number;
+  type: 'INCOME' | 'EXPENSE';
+  occurrenceCount: number; // Number of months detected
+  monthsSeen: string[]; // List of YYYY-MM strings
+}
+
+export interface YearlyTrendPoint {
+  monthName: string; // "2026-01"
+  income: number;
+  expenses: number;
+  net: number;
+}
+
 // Default Dutch & international fixed cost keywords
 const DEFAULT_FIXED_KEYWORDS = [
   'HUUR', 'HYPOTHEEK', 'ZORGVERZEKERING', 'ENERGIE', 'ZIGGO',
@@ -75,8 +103,16 @@ export async function initDatabase(db: SQLiteDatabase): Promise<void> {
   await db.execAsync(`
     PRAGMA journal_mode = WAL;
 
+    CREATE TABLE IF NOT EXISTS profiles (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      avatarColor TEXT NOT NULL,
+      isDefault INTEGER DEFAULT 0
+    );
+
     CREATE TABLE IF NOT EXISTS transactions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      profileId INTEGER NOT NULL DEFAULT 1,
       date TEXT NOT NULL,
       amount REAL NOT NULL,
       rawDescription TEXT NOT NULL,
@@ -90,27 +126,94 @@ export async function initDatabase(db: SQLiteDatabase): Promise<void> {
 
     CREATE TABLE IF NOT EXISTS category_rules (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      keyword TEXT UNIQUE NOT NULL,
-      category TEXT NOT NULL
+      profileId INTEGER NOT NULL DEFAULT 1,
+      keyword TEXT NOT NULL,
+      category TEXT NOT NULL,
+      UNIQUE(keyword, profileId)
     );
 
     CREATE TABLE IF NOT EXISTS category_goals (
-      category TEXT PRIMARY KEY,
-      monthly_limit REAL NOT NULL
+      category TEXT NOT NULL,
+      profileId INTEGER NOT NULL DEFAULT 1,
+      monthly_limit REAL NOT NULL,
+      PRIMARY KEY (category, profileId)
     );
 
     CREATE TABLE IF NOT EXISTS fixed_cost_rules (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      keyword TEXT UNIQUE NOT NULL,
-      category TEXT NOT NULL
+      profileId INTEGER NOT NULL DEFAULT 1,
+      keyword TEXT NOT NULL,
+      category TEXT NOT NULL,
+      UNIQUE(keyword, profileId)
     );
   `);
+
+  // --- MIGRATION: Safely add missing profileId columns to existing databases ---
+  try {
+    await db.execAsync(`ALTER TABLE transactions ADD COLUMN profileId INTEGER NOT NULL DEFAULT 1;`);
+  } catch (e) {
+    // Column profileId already exists in transactions
+  }
+
+  try {
+    await db.execAsync(`ALTER TABLE category_rules ADD COLUMN profileId INTEGER NOT NULL DEFAULT 1;`);
+  } catch (e) {
+    // Column profileId already exists in category_rules
+  }
+
+  try {
+    await db.execAsync(`ALTER TABLE category_goals ADD COLUMN profileId INTEGER NOT NULL DEFAULT 1;`);
+  } catch (e) {
+    // Column profileId already exists in category_goals
+  }
+
+  try {
+    await db.execAsync(`ALTER TABLE fixed_cost_rules ADD COLUMN profileId INTEGER NOT NULL DEFAULT 1;`);
+  } catch (e) {
+    // Column profileId already exists in fixed_cost_rules
+  }
+
+  // Ensure default profiles exist
+  const existingProfiles = await db.getAllAsync<{ id: number }>(`SELECT id FROM profiles;`);
+  if (existingProfiles.length === 0) {
+    await db.runAsync(
+      `INSERT INTO profiles (name, avatarColor, isDefault) VALUES ('Profile 1', '#007AFF', 1);`
+    );
+    await db.runAsync(
+      `INSERT INTO profiles (name, avatarColor, isDefault) VALUES ('Profile 2', '#34C759', 0);`
+    );
+  }
+}
+
+// Profile Management Helpers
+export async function getProfiles(db: SQLiteDatabase): Promise<Profile[]> {
+  if (!db) return [];
+  return await db.getAllAsync<Profile>(`SELECT * FROM profiles ORDER BY id ASC;`);
+}
+
+export async function createProfile(
+  db: SQLiteDatabase,
+  name: string,
+  color: string = '#007AFF'
+): Promise<Profile | null> {
+  if (!db) return null;
+  const res = await db.runAsync(
+    `INSERT INTO profiles (name, avatarColor, isDefault) VALUES (?, ?, 0);`,
+    [name, color]
+  );
+  return {
+    id: res.lastInsertRowId,
+    name,
+    avatarColor: color,
+    isDefault: 0,
+  };
 }
 
 // Fixed vs. Flexible Costs Summary
 export async function getFixedVsFlexibleSummary(
   db: SQLiteDatabase,
-  monthName: string
+  monthName: string,
+  profileId: number = 1
 ): Promise<FixedCostSummary> {
   if (!db) {
     return {
@@ -123,11 +226,11 @@ export async function getFixedVsFlexibleSummary(
   }
 
   try {
-    // 1. Fetch user rules and smart detected recurring merchants
     const customRules = await db.getAllAsync<{ keyword: string }>(
-      `SELECT keyword FROM fixed_cost_rules;`
+      `SELECT keyword FROM fixed_cost_rules WHERE profileId = ?;`,
+      [profileId]
     );
-    const detectedPatterns = await detectRecurringPatterns(db, 2);
+    const detectedPatterns = await detectRecurringPatterns(db, 2, profileId);
 
     const recurringKeywords = new Set([
       ...DEFAULT_FIXED_KEYWORDS,
@@ -135,12 +238,11 @@ export async function getFixedVsFlexibleSummary(
       ...detectedPatterns.map((p) => p.merchant.toUpperCase()),
     ]);
 
-    // 2. Fetch all expenses for active month
     const expenses = await db.getAllAsync<{ amount: number; rawDescription: string; merchant: string }>(
       `SELECT ABS(amount) as amount, rawDescription, merchant 
        FROM transactions 
-       WHERE monthName = ? AND amount < 0;`,
-      [monthName]
+       WHERE monthName = ? AND profileId = ? AND amount < 0;`,
+      [monthName, profileId]
     );
 
     let fixedTotal = 0;
@@ -185,18 +287,20 @@ export async function getFixedVsFlexibleSummary(
 export async function addFixedCostRule(
   db: SQLiteDatabase,
   keyword: string,
-  category: string = 'Subscriptions & Bills'
+  category: string = 'Subscriptions & Bills',
+  profileId: number = 1
 ): Promise<void> {
   await db.runAsync(
-    `INSERT OR REPLACE INTO fixed_cost_rules (keyword, category) VALUES (?, ?);`,
-    [keyword.toUpperCase(), category]
+    `INSERT OR REPLACE INTO fixed_cost_rules (profileId, keyword, category) VALUES (?, ?, ?);`,
+    [profileId, keyword.toUpperCase(), category]
   );
 }
 
 // Category Goals Management
 export async function getCategoryGoalsWithProgress(
   db: SQLiteDatabase,
-  monthStr: string
+  monthStr: string,
+  profileId: number = 1
 ): Promise<CategoryGoalWithProgress[]> {
   const query = `
     SELECT 
@@ -204,20 +308,21 @@ export async function getCategoryGoalsWithProgress(
       COALESCE(g.monthly_limit, 0) as monthlyLimit,
       COALESCE(SUM(ABS(t.amount)), 0) as spent
     FROM (
-      SELECT DISTINCT category FROM transactions WHERE amount < 0
+      SELECT DISTINCT category FROM transactions WHERE amount < 0 AND profileId = ?
       UNION
-      SELECT category FROM category_goals
+      SELECT category FROM category_goals WHERE profileId = ?
     ) c
-    LEFT JOIN category_goals g ON c.category = g.category
+    LEFT JOIN category_goals g ON c.category = g.category AND g.profileId = ?
     LEFT JOIN transactions t ON c.category = t.category 
       AND t.monthName = ? 
+      AND t.profileId = ?
       AND t.amount < 0
     GROUP BY c.category
     ORDER BY spent DESC;
   `;
   const rows = await db.getAllAsync<{ category: string; monthlyLimit: number; spent: number }>(
     query,
-    [monthStr]
+    [profileId, profileId, profileId, monthStr, profileId]
   );
 
   return rows.map((r) => {
@@ -236,30 +341,33 @@ export async function getCategoryGoalsWithProgress(
 export async function setCategoryGoal(
   db: SQLiteDatabase,
   category: string,
-  monthlyLimit: number
+  monthlyLimit: number,
+  profileId: number = 1
 ): Promise<void> {
   await db.runAsync(
-    `INSERT INTO category_goals (category, monthly_limit)
-     VALUES (?, ?)
-     ON CONFLICT(category) DO UPDATE SET monthly_limit = excluded.monthly_limit;`,
-    [category, monthlyLimit]
+    `INSERT INTO category_goals (category, profileId, monthly_limit)
+     VALUES (?, ?, ?)
+     ON CONFLICT(category, profileId) DO UPDATE SET monthly_limit = excluded.monthly_limit;`,
+    [category, profileId, monthlyLimit]
   );
 }
 
 // Transaction Writes & Management
 export async function insertTransactions(
   db: SQLiteDatabase,
-  transactions: Omit<Transaction, 'id'>[]
+  transactions: Omit<Transaction, 'id'>[],
+  profileId: number = 1
 ): Promise<void> {
   await db.withTransactionAsync(async () => {
     for (const tx of transactions) {
       await db.runAsync(
         `INSERT INTO transactions
-           (date, amount, rawDescription, merchant, category, monthName, isZeroFlagged, dateAmbiguous)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?);`,
+           (profileId, date, amount, rawDescription, merchant, category, monthName, isZeroFlagged, dateAmbiguous)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);`,
         [
+          tx.profileId ?? profileId,
           tx.date,
-          Number(tx.amount), // Force floating-point representation
+          Number(tx.amount),
           tx.rawDescription,
           tx.merchant,
           tx.category,
@@ -272,9 +380,12 @@ export async function insertTransactions(
   });
 }
 
-export async function clearAllTransactions(db: SQLiteDatabase): Promise<void> {
+export async function clearAllTransactions(
+  db: SQLiteDatabase,
+  profileId: number = 1
+): Promise<void> {
   if (!db) return;
-  await db.runAsync(`DELETE FROM transactions;`);
+  await db.runAsync(`DELETE FROM transactions WHERE profileId = ?;`, [profileId]);
 }
 
 export async function updateTransactionCategory(
@@ -289,24 +400,29 @@ export async function updateTransactionCategory(
 }
 
 // Date & Overview Queries
-export async function getAvailableMonths(db: SQLiteDatabase): Promise<string[]> {
+export async function getAvailableMonths(
+  db: SQLiteDatabase,
+  profileId: number = 1
+): Promise<string[]> {
   const rows = await db.getAllAsync<{ monthName: string }>(
-    `SELECT DISTINCT monthName FROM transactions ORDER BY monthName DESC;`
+    `SELECT DISTINCT monthName FROM transactions WHERE profileId = ? ORDER BY monthName DESC;`,
+    [profileId]
   );
   return rows.map((r) => r.monthName);
 }
 
 export async function getMonthlySummary(
   db: SQLiteDatabase,
-  monthName: string
+  monthName: string,
+  profileId: number = 1
 ): Promise<MonthlySummary> {
   const result = await db.getFirstAsync<{ totalIncome: number; totalExpenses: number }>(
     `SELECT 
        TOTAL(CASE WHEN amount > 0 THEN amount ELSE 0 END) AS totalIncome,
        TOTAL(CASE WHEN amount < 0 THEN ABS(amount) ELSE 0 END) AS totalExpenses
      FROM transactions
-     WHERE monthName = ?;`,
-    [monthName]
+     WHERE monthName = ? AND profileId = ?;`,
+    [monthName, profileId]
   );
 
   const totalIncome = result?.totalIncome ?? 0;
@@ -321,7 +437,8 @@ export async function getMonthlySummary(
 
 export async function getMonthlyCategoryTotals(
   db: SQLiteDatabase,
-  monthName: string
+  monthName: string,
+  profileId: number = 1
 ): Promise<CategoryTotal[]> {
   if (!db) return [];
 
@@ -329,11 +446,11 @@ export async function getMonthlyCategoryTotals(
     const query = `
       SELECT category, TOTAL(ABS(amount)) as totalAmount, COUNT(*) as count
       FROM transactions
-      WHERE monthName = ? AND amount < 0
+      WHERE monthName = ? AND profileId = ? AND amount < 0
       GROUP BY category
       ORDER BY totalAmount DESC;
     `;
-    return await db.getAllAsync<CategoryTotal>(query, [monthName]);
+    return await db.getAllAsync<CategoryTotal>(query, [monthName, profileId]);
   } catch (error) {
     console.error('Error in getMonthlyCategoryTotals:', error);
     return [];
@@ -343,15 +460,16 @@ export async function getMonthlyCategoryTotals(
 export async function getFullYearSpendingTrend(
   db: SQLiteDatabase,
   year: string = '2026',
-  category?: string
+  category?: string,
+  profileId: number = 1
 ): Promise<MonthlyTrend[]> {
   try {
     let query = `
       SELECT monthName, TOTAL(ABS(amount)) as totalAmount
       FROM transactions
-      WHERE monthName LIKE ? AND amount < 0
+      WHERE monthName LIKE ? AND profileId = ? AND amount < 0
     `;
-    const params: string[] = [`${year}-%`];
+    const params: (string | number)[] = [`${year}-%`, profileId];
 
     if (category && category !== 'All') {
       query += ` AND category = ?`;
@@ -371,10 +489,11 @@ export async function getFullYearSpendingTrend(
 export async function getFilteredTransactions(
   db: SQLiteDatabase,
   monthName: string,
-  typeFilter: 'EXPENSE' | 'INCOME' | 'ALL' = 'ALL'
+  typeFilter: 'EXPENSE' | 'INCOME' | 'ALL' = 'ALL',
+  profileId: number = 1
 ): Promise<Transaction[]> {
-  let query = `SELECT * FROM transactions WHERE monthName = ?`;
-  const params: (string | number)[] = [monthName];
+  let query = `SELECT * FROM transactions WHERE monthName = ? AND profileId = ?`;
+  const params: (string | number)[] = [monthName, profileId];
 
   if (typeFilter === 'EXPENSE') {
     query += ` AND amount < 0`;
@@ -390,10 +509,11 @@ export async function getTransactionsByMonth(
   db: SQLiteDatabase,
   monthName: string,
   searchQuery: string = '',
-  categoryFilter: string = 'ALL'
+  categoryFilter: string = 'ALL',
+  profileId: number = 1
 ): Promise<Transaction[]> {
-  let query = `SELECT * FROM transactions WHERE monthName = ?`;
-  const params: (string | number)[] = [monthName];
+  let query = `SELECT * FROM transactions WHERE monthName = ? AND profileId = ?`;
+  const params: (string | number)[] = [monthName, profileId];
 
   if (categoryFilter !== 'ALL') {
     query += ` AND category = ?`;
@@ -414,15 +534,16 @@ export async function getTransactionsByMonth(
 export async function getTransactionsByMonthAndCategory(
   db: SQLiteDatabase,
   monthName: string,
-  category: string
+  category: string,
+  profileId: number = 1
 ): Promise<Transaction[]> {
   try {
     const query = `
       SELECT * FROM transactions
-      WHERE monthName = ? AND category = ?
+      WHERE monthName = ? AND category = ? AND profileId = ?
       ORDER BY date DESC;
     `;
-    return await db.getAllAsync<Transaction>(query, [monthName, category]);
+    return await db.getAllAsync<Transaction>(query, [monthName, category, profileId]);
   } catch (error) {
     console.error('Error in getTransactionsByMonthAndCategory:', error);
     return [];
@@ -432,7 +553,8 @@ export async function getTransactionsByMonthAndCategory(
 export async function searchTransactions(
   db: SQLiteDatabase,
   searchQuery: string = '',
-  category: string = 'All'
+  category: string = 'All',
+  profileId: number = 1
 ): Promise<TransactionRecord[]> {
   if (!db) return [];
 
@@ -440,9 +562,9 @@ export async function searchTransactions(
     let sql = `
       SELECT id, date, amount, category, monthName, rawDescription AS description, rawDescription
       FROM transactions
-      WHERE 1=1
+      WHERE profileId = ?
     `;
-    const params: string[] = [];
+    const params: (string | number)[] = [profileId];
 
     if (searchQuery.trim().length > 0) {
       sql += ` AND (rawDescription LIKE ? OR merchant LIKE ? OR category LIKE ?)`;
@@ -467,7 +589,8 @@ export async function searchTransactions(
 export async function getCategoryTransactionsForMonth(
   db: SQLiteDatabase,
   monthName: string,
-  category: string
+  category: string,
+  profileId: number = 1
 ): Promise<TransactionRecord[]> {
   if (!db) return [];
 
@@ -475,10 +598,10 @@ export async function getCategoryTransactionsForMonth(
     const query = `
       SELECT id, date, amount, category, monthName, rawDescription AS description
       FROM transactions
-      WHERE monthName = ? AND category = ?
+      WHERE monthName = ? AND category = ? AND profileId = ?
       ORDER BY date DESC;
     `;
-    return await db.getAllAsync<TransactionRecord>(query, [monthName, category]);
+    return await db.getAllAsync<TransactionRecord>(query, [monthName, category, profileId]);
   } catch (error) {
     console.error('Error fetching category transactions:', error);
     return [];
@@ -486,18 +609,25 @@ export async function getCategoryTransactionsForMonth(
 }
 
 // Custom Rules Queries
-export async function getCustomRules(db: SQLiteDatabase): Promise<CategoryRule[]> {
-  return await db.getAllAsync<CategoryRule>(`SELECT * FROM category_rules ORDER BY keyword ASC;`);
+export async function getCustomRules(
+  db: SQLiteDatabase,
+  profileId: number = 1
+): Promise<CategoryRule[]> {
+  return await db.getAllAsync<CategoryRule>(
+    `SELECT * FROM category_rules WHERE profileId = ? ORDER BY keyword ASC;`,
+    [profileId]
+  );
 }
 
 export async function addCustomRule(
   db: SQLiteDatabase,
   keyword: string,
-  category: string
+  category: string,
+  profileId: number = 1
 ): Promise<void> {
   await db.runAsync(
-    `INSERT OR REPLACE INTO category_rules (keyword, category) VALUES (?, ?);`,
-    [keyword.toUpperCase(), category]
+    `INSERT OR REPLACE INTO category_rules (profileId, keyword, category) VALUES (?, ?, ?);`,
+    [profileId, keyword.toUpperCase(), category]
   );
 }
 
@@ -505,16 +635,10 @@ export async function deleteCustomRule(db: SQLiteDatabase, id: number): Promise<
   await db.runAsync(`DELETE FROM category_rules WHERE id = ?;`, [id]);
 }
 
-export interface YearlyTrendPoint {
-  monthName: string; // "2026-01"
-  income: number;
-  expenses: number;
-  net: number;
-}
-
 export async function getFullYearTrendData(
   db: SQLiteDatabase,
-  year: string = '2026'
+  year: string = '2026',
+  profileId: number = 1
 ): Promise<YearlyTrendPoint[]> {
   const rows = await db.getAllAsync<{ monthName: string; income: number; expenses: number }>(
     `SELECT 
@@ -522,10 +646,10 @@ export async function getFullYearTrendData(
        TOTAL(CASE WHEN amount > 0 THEN amount ELSE 0 END) AS income,
        TOTAL(CASE WHEN amount < 0 THEN ABS(amount) ELSE 0 END) AS expenses
      FROM transactions
-     WHERE monthName LIKE ?
+     WHERE monthName LIKE ? AND profileId = ?
      GROUP BY monthName
      ORDER BY monthName ASC;`,
-    [`${year}-%`]
+    [`${year}-%`, profileId]
   );
 
   return rows.map((r) => ({
@@ -536,48 +660,45 @@ export async function getFullYearTrendData(
   }));
 }
 
-export async function clearAllData(db: SQLiteDatabase): Promise<void> {
-  await db.execAsync('DELETE FROM transactions;');
-}
-
-export interface DetectedRecurringItem {
-  merchant: string;
-  category: string;
-  averageAmount: number;
-  type: 'INCOME' | 'EXPENSE';
-  occurrenceCount: number; // Number of months detected
-  monthsSeen: string[]; // List of YYYY-MM strings
+export async function clearAllData(
+  db: SQLiteDatabase,
+  profileId: number = 1
+): Promise<void> {
+  await db.execAsync(`DELETE FROM transactions WHERE profileId = ${profileId};`);
 }
 
 /**
  * Smart Pattern Detection: Scans historical transactions across consecutive months
- * to auto-detect recurring fixed expenses and recurring incomes.
+ * for a specific profile to auto-detect recurring fixed expenses and recurring incomes.
  */
 export async function detectRecurringPatterns(
   db: SQLiteDatabase,
-  minMonthsThreshold: number = 2
+  minMonthsThreshold: number = 2,
+  profileId: number = 1
 ): Promise<DetectedRecurringItem[]> {
   if (!db) return [];
 
   try {
-    // Group transactions by merchant/description pattern and month
     const rows = await db.getAllAsync<{
       merchantKey: string;
       category: string;
       monthName: string;
       avgAmount: number;
-    }>(`
+    }>(
+      `
       SELECT 
         UPPER(TRIM(COALESCE(NULLIF(merchant, 'Unknown'), rawDescription))) AS merchantKey,
         category,
         monthName,
         AVG(amount) AS avgAmount
       FROM transactions
+      WHERE profileId = ?
       GROUP BY merchantKey, monthName
       ORDER BY merchantKey, monthName DESC;
-    `);
+    `,
+      [profileId]
+    );
 
-    // Group month occurrences per merchant
     const merchantMap: Record<
       string,
       {
@@ -605,7 +726,6 @@ export async function detectRecurringPatterns(
     const detectedList: DetectedRecurringItem[] = [];
 
     for (const [merchant, data] of Object.entries(merchantMap)) {
-      // Must appear in at least N distinct months to qualify as recurring
       if (data.monthsSeen.length >= minMonthsThreshold) {
         const sum = data.amounts.reduce((a, b) => a + b, 0);
         const averageAmount = sum / data.amounts.length;
@@ -632,21 +752,23 @@ export async function detectRecurringPatterns(
  * Evaluates whether a given merchant/description is classified as a Fixed Cost
  * via custom rules, default keywords, OR smart recurring pattern detection.
  */
- export async function isTransactionFixed(
+export async function isTransactionFixed(
   db: SQLiteDatabase,
-  merchantOrDesc: string
+  merchantOrDesc: string,
+  profileId: number = 1
 ): Promise<boolean> {
   if (!db || !merchantOrDesc) return false;
   const targetUpper = merchantOrDesc.toUpperCase().trim();
 
   // 1. Check custom user rules
   const customRules = await db.getAllAsync<{ keyword: string }>(
-    `SELECT keyword FROM fixed_cost_rules;`
+    `SELECT keyword FROM fixed_cost_rules WHERE profileId = ?;`,
+    [profileId]
   );
   const customKeywords = customRules.map((r) => r.keyword.toUpperCase());
 
   // 2. Check smart detected recurring patterns
-  const detectedPatterns = await detectRecurringPatterns(db, 2);
+  const detectedPatterns = await detectRecurringPatterns(db, 2, profileId);
   const detectedKeywords = detectedPatterns.map((p) => p.merchant.toUpperCase());
 
   const allFixedKeywords = new Set([
@@ -661,19 +783,23 @@ export async function detectRecurringPatterns(
 export async function toggleFixedCostRule(
   db: SQLiteDatabase,
   keyword: string,
-  category: string = 'Subscriptions & Bills'
+  category: string = 'Subscriptions & Bills',
+  profileId: number = 1
 ): Promise<boolean> {
   if (!db || !keyword) return false;
   const kwUpper = keyword.toUpperCase().trim();
-  const currentlyFixed = await isTransactionFixed(db, kwUpper);
+  const currentlyFixed = await isTransactionFixed(db, kwUpper, profileId);
 
   if (currentlyFixed) {
-    await db.runAsync(`DELETE FROM fixed_cost_rules WHERE keyword = ?;`, [kwUpper]);
+    await db.runAsync(
+      `DELETE FROM fixed_cost_rules WHERE keyword = ? AND profileId = ?;`,
+      [kwUpper, profileId]
+    );
     return false; // Now unfixed
   } else {
     await db.runAsync(
-      `INSERT OR REPLACE INTO fixed_cost_rules (keyword, category) VALUES (?, ?);`,
-      [kwUpper, category]
+      `INSERT OR REPLACE INTO fixed_cost_rules (profileId, keyword, category) VALUES (?, ?, ?);`,
+      [profileId, kwUpper, category]
     );
     return true; // Now fixed
   }
@@ -682,15 +808,17 @@ export async function toggleFixedCostRule(
 export async function getFixedOrFlexibleTransactions(
   db: SQLiteDatabase,
   monthName: string,
-  isFixedTarget: boolean
+  isFixedTarget: boolean,
+  profileId: number = 1
 ): Promise<Transaction[]> {
   if (!db) return [];
 
   try {
     const customRules = await db.getAllAsync<{ keyword: string }>(
-      `SELECT keyword FROM fixed_cost_rules;`
+      `SELECT keyword FROM fixed_cost_rules WHERE profileId = ?;`,
+      [profileId]
     );
-    const detectedPatterns = await detectRecurringPatterns(db, 2);
+    const detectedPatterns = await detectRecurringPatterns(db, 2, profileId);
 
     const recurringKeywords = Array.from(
       new Set([
@@ -701,8 +829,8 @@ export async function getFixedOrFlexibleTransactions(
     );
 
     const expenses = await db.getAllAsync<Transaction>(
-      `SELECT * FROM transactions WHERE monthName = ? AND amount < 0 ORDER BY ABS(amount) DESC;`,
-      [monthName]
+      `SELECT * FROM transactions WHERE monthName = ? AND profileId = ? AND amount < 0 ORDER BY ABS(amount) DESC;`,
+      [monthName, profileId]
     );
 
     return expenses.filter((exp) => {
