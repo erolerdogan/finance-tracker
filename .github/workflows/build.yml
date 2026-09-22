@@ -19,15 +19,16 @@ jobs:
           node-version: 20
           cache: 'npm'
 
-      - name: Setup Expo
+      - name: Setup Expo & EAS CLI
         uses: expo/expo-github-action@v8
         with:
           expo-version: latest
           eas-version: latest
           token: ${{ secrets.EXPO_TOKEN }}
+          packager: npm
 
       - name: Install dependencies
-        run: npm install --legacy-peer-deps
+        run: npm ci --legacy-peer-deps
 
       - name: Trigger Android Build
         run: eas build --platform android --profile preview --non-interactive
