@@ -7,18 +7,21 @@ export interface Profile {
   isDefault: number;
 }
 
+export type FixedOverrideState = 'AUTO' | 'FIXED' | 'FLEXIBLE';
+
 export interface Transaction {
   id: number;
-  profileId?: number; // Optional so CSV/Excel parsers don't require it prior to insertion
+  profileId?: number;
   date: string;
-  amount: number; // Signed numeric: negative = Outflow (Expense), positive = Inflow (Income/Refund)
+  amount: number;
   rawDescription: string;
   merchant: string;
   category: string;
-  monthName: string; // Format: YYYY-MM (e.g., "2026-09")
+  monthName: string;
   userOverridden?: number;
-  isZeroFlagged?: number; // 1 if amount was $0.00 (pending/reversed)
-  dateAmbiguous?: number; // 1 if date format (DD/MM vs MM/DD) is ambiguous
+  isZeroFlagged?: number;
+  dateAmbiguous?: number;
+  is_fixed?: number | null; // null/undefined = AUTO, 1 = FIXED, 0 = FLEXIBLE
 }
 
 export interface CategoryTotal {
@@ -61,12 +64,13 @@ export interface TransactionRecord {
   amount: number;
   category: string;
   monthName: string;
-  description: string; // Aliased from rawDescription at query time
+  description: string;
   rawDescription?: string;
+  is_fixed?: number | null;
 }
 
 export interface MonthlyTrend {
-  monthName: string; // e.g., "2026-01"
+  monthName: string;
   totalAmount: number;
 }
 
@@ -81,18 +85,17 @@ export interface DetectedRecurringItem {
   category: string;
   averageAmount: number;
   type: 'INCOME' | 'EXPENSE';
-  occurrenceCount: number; // Number of months detected
-  monthsSeen: string[]; // List of YYYY-MM strings
+  occurrenceCount: number;
+  monthsSeen: string[];
 }
 
 export interface YearlyTrendPoint {
-  monthName: string; // "2026-01"
+  monthName: string;
   income: number;
   expenses: number;
   net: number;
 }
 
-// Default Dutch & international fixed cost keywords
 const DEFAULT_FIXED_KEYWORDS = [
   'HUUR', 'HYPOTHEEK', 'ZORGVERZEKERING', 'ENERGIE', 'ZIGGO',
   'KPN', 'NETFLIX', 'SPOTIFY', 'ICLOUD', 'WATER', 'STEDIN',
@@ -121,7 +124,8 @@ export async function initDatabase(db: SQLiteDatabase): Promise<void> {
       monthName TEXT NOT NULL,
       userOverridden INTEGER DEFAULT 0,
       isZeroFlagged INTEGER DEFAULT 0,
-      dateAmbiguous INTEGER DEFAULT 0
+      dateAmbiguous INTEGER DEFAULT 0,
+      is_fixed INTEGER
     );
 
     CREATE TABLE IF NOT EXISTS category_rules (
@@ -144,36 +148,35 @@ export async function initDatabase(db: SQLiteDatabase): Promise<void> {
       profileId INTEGER NOT NULL DEFAULT 1,
       keyword TEXT NOT NULL,
       category TEXT NOT NULL,
+      overrideState TEXT NOT NULL,
       UNIQUE(keyword, profileId)
     );
   `);
 
-  // --- MIGRATION: Safely add missing profileId columns to existing databases ---
   try {
     await db.execAsync(`ALTER TABLE transactions ADD COLUMN profileId INTEGER NOT NULL DEFAULT 1;`);
-  } catch (e) {
-    // Column profileId already exists in transactions
-  }
+  } catch (e) {}
+
+  try {
+    await db.execAsync(`ALTER TABLE transactions ADD COLUMN is_fixed INTEGER;`);
+  } catch (e) {}
 
   try {
     await db.execAsync(`ALTER TABLE category_rules ADD COLUMN profileId INTEGER NOT NULL DEFAULT 1;`);
-  } catch (e) {
-    // Column profileId already exists in category_rules
-  }
+  } catch (e) {}
 
   try {
     await db.execAsync(`ALTER TABLE category_goals ADD COLUMN profileId INTEGER NOT NULL DEFAULT 1;`);
-  } catch (e) {
-    // Column profileId already exists in category_goals
-  }
+  } catch (e) {}
 
   try {
     await db.execAsync(`ALTER TABLE fixed_cost_rules ADD COLUMN profileId INTEGER NOT NULL DEFAULT 1;`);
-  } catch (e) {
-    // Column profileId already exists in fixed_cost_rules
-  }
+  } catch (e) {}
 
-  // Ensure default profiles exist
+  try {
+    await db.execAsync(`ALTER TABLE fixed_cost_rules ADD COLUMN overrideState TEXT NOT NULL DEFAULT 'FIXED';`);
+  } catch (e) {}
+
   const existingProfiles = await db.getAllAsync<{ id: number }>(`SELECT id FROM profiles;`);
   if (existingProfiles.length === 0) {
     await db.runAsync(
@@ -185,7 +188,6 @@ export async function initDatabase(db: SQLiteDatabase): Promise<void> {
   }
 }
 
-// Profile Management Helpers
 export async function getProfiles(db: SQLiteDatabase): Promise<Profile[]> {
   if (!db) return [];
   return await db.getAllAsync<Profile>(`SELECT * FROM profiles ORDER BY id ASC;`);
@@ -209,82 +211,38 @@ export async function createProfile(
   };
 }
 
-// Fixed vs. Flexible Costs Summary
 export async function getFixedVsFlexibleSummary(
   db: SQLiteDatabase,
   monthName: string,
-  profileId: number = 1
+  profileId: number
 ): Promise<FixedCostSummary> {
-  if (!db) {
-    return {
-      fixedTotal: 0,
-      flexibleTotal: 0,
-      fixedPercentage: 0,
-      flexiblePercentage: 0,
-      fixedItemsCount: 0,
-    };
-  }
+  const result = await db.getFirstAsync<{
+    fixedTotal: number;
+    flexibleTotal: number;
+    fixedCount: number;
+  }>(
+    `SELECT 
+       COALESCE(SUM(CASE WHEN is_fixed = 1 AND amount < 0 THEN ABS(amount) ELSE 0 END), 0) as fixedTotal,
+       COALESCE(SUM(CASE WHEN (is_fixed = 0 OR is_fixed IS NULL) AND amount < 0 THEN ABS(amount) ELSE 0 END), 0) as flexibleTotal,
+       COALESCE(SUM(CASE WHEN is_fixed = 1 AND amount < 0 THEN 1 ELSE 0 END), 0) as fixedCount
+     FROM transactions 
+     WHERE monthName = ? AND profileId = ?;`,
+    [monthName, profileId]
+  );
 
-  try {
-    const customRules = await db.getAllAsync<{ keyword: string }>(
-      `SELECT keyword FROM fixed_cost_rules WHERE profileId = ?;`,
-      [profileId]
-    );
-    const detectedPatterns = await detectRecurringPatterns(db, 2, profileId);
+  const fixedTotal = result?.fixedTotal ?? 0;
+  const flexibleTotal = result?.flexibleTotal ?? 0;
+  const grandTotal = fixedTotal + flexibleTotal;
 
-    const recurringKeywords = new Set([
-      ...DEFAULT_FIXED_KEYWORDS,
-      ...customRules.map((r) => r.keyword.toUpperCase()),
-      ...detectedPatterns.map((p) => p.merchant.toUpperCase()),
-    ]);
-
-    const expenses = await db.getAllAsync<{ amount: number; rawDescription: string; merchant: string }>(
-      `SELECT ABS(amount) as amount, rawDescription, merchant 
-       FROM transactions 
-       WHERE monthName = ? AND profileId = ? AND amount < 0;`,
-      [monthName, profileId]
-    );
-
-    let fixedTotal = 0;
-    let flexibleTotal = 0;
-    let fixedItemsCount = 0;
-
-    for (const exp of expenses) {
-      const descUpper = `${exp.rawDescription} ${exp.merchant}`.toUpperCase();
-      const isFixed = Array.from(recurringKeywords).some((kw) => descUpper.includes(kw));
-
-      if (isFixed) {
-        fixedTotal += exp.amount;
-        fixedItemsCount += 1;
-      } else {
-        flexibleTotal += exp.amount;
-      }
-    }
-
-    const grandTotal = fixedTotal + flexibleTotal;
-    const fixedPercentage = grandTotal > 0 ? Math.round((fixedTotal / grandTotal) * 100) : 0;
-    const flexiblePercentage = grandTotal > 0 ? 100 - fixedPercentage : 0;
-
-    return {
-      fixedTotal,
-      flexibleTotal,
-      fixedPercentage,
-      flexiblePercentage,
-      fixedItemsCount,
-    };
-  } catch (error) {
-    console.error('Error in getFixedVsFlexibleSummary:', error);
-    return {
-      fixedTotal: 0,
-      flexibleTotal: 0,
-      fixedPercentage: 0,
-      flexiblePercentage: 0,
-      fixedItemsCount: 0,
-    };
-  }
+  return {
+    fixedTotal,
+    flexibleTotal,
+    fixedPercentage: grandTotal > 0 ? (fixedTotal / grandTotal) * 100 : 0,
+    flexiblePercentage: grandTotal > 0 ? (flexibleTotal / grandTotal) * 100 : 0,
+    fixedItemsCount: result?.fixedCount ?? 0,
+  };
 }
 
-// Category Goals Management
 export async function getCategoryGoalsWithProgress(
   db: SQLiteDatabase,
   monthStr: string,
@@ -340,7 +298,6 @@ export async function setCategoryGoal(
   );
 }
 
-// Transaction Writes & Management
 export async function insertTransactions(
   db: SQLiteDatabase,
   transactions: Omit<Transaction, 'id'>[],
@@ -348,10 +305,13 @@ export async function insertTransactions(
 ): Promise<void> {
   await db.withTransactionAsync(async () => {
     for (const tx of transactions) {
+      const keyword = tx.merchant !== 'Unknown' ? tx.merchant : tx.rawDescription;
+      const initialFixedState = await isTransactionFixed(db, keyword, profileId);
+
       await db.runAsync(
         `INSERT INTO transactions
-           (profileId, date, amount, rawDescription, merchant, category, monthName, isZeroFlagged, dateAmbiguous)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+           (profileId, date, amount, rawDescription, merchant, category, monthName, isZeroFlagged, dateAmbiguous, is_fixed)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
         [
           tx.profileId ?? profileId,
           tx.date,
@@ -362,6 +322,7 @@ export async function insertTransactions(
           tx.monthName,
           tx.isZeroFlagged ?? 0,
           tx.dateAmbiguous ?? 0,
+          initialFixedState ? 1 : 0,
         ]
       );
     }
@@ -387,7 +348,6 @@ export async function updateTransactionCategory(
   );
 }
 
-// Date & Overview Queries
 export async function getAvailableMonths(
   db: SQLiteDatabase,
   profileId: number = 1
@@ -473,7 +433,6 @@ export async function getFullYearSpendingTrend(
   }
 }
 
-// Filtered Transaction Queries
 export async function getFilteredTransactions(
   db: SQLiteDatabase,
   monthName: string,
@@ -551,7 +510,7 @@ export async function searchTransactions(
 
   try {
     let sql = `
-      SELECT id, date, amount, category, monthName, rawDescription AS description, rawDescription
+      SELECT id, date, amount, category, monthName, rawDescription AS description, rawDescription, is_fixed
       FROM transactions
       WHERE profileId = ?
     `;
@@ -587,7 +546,7 @@ export async function getCategoryTransactionsForMonth(
 
   try {
     const query = `
-      SELECT id, date, amount, category, monthName, rawDescription AS description
+      SELECT id, date, amount, category, monthName, rawDescription AS description, is_fixed
       FROM transactions
       WHERE monthName = ? AND category = ? AND profileId = ?
       ORDER BY date DESC;
@@ -599,7 +558,6 @@ export async function getCategoryTransactionsForMonth(
   }
 }
 
-// Custom Rules Queries
 export async function getCustomRules(
   db: SQLiteDatabase,
   profileId: number = 1
@@ -658,10 +616,6 @@ export async function clearAllData(
   await db.execAsync(`DELETE FROM transactions WHERE profileId = ${profileId};`);
 }
 
-/**
- * Smart Pattern Detection: Scans historical transactions across consecutive months
- * for a specific profile to auto-detect recurring fixed expenses and recurring incomes.
- */
 export async function detectRecurringPatterns(
   db: SQLiteDatabase,
   minMonthsThreshold: number = 2,
@@ -739,10 +693,6 @@ export async function detectRecurringPatterns(
   }
 }
 
-/**
- * Evaluates whether a given merchant/description is classified as a Fixed Cost
- * via custom rules, default keywords, OR smart recurring pattern detection.
- */
 export async function isTransactionFixed(
   db: SQLiteDatabase,
   merchantOrDesc: string,
@@ -751,87 +701,120 @@ export async function isTransactionFixed(
   if (!db || !merchantOrDesc) return false;
   const targetUpper = merchantOrDesc.toUpperCase().trim();
 
-  // 1. Check custom user rules
-  const customRules = await db.getAllAsync<{ keyword: string }>(
-    `SELECT keyword FROM fixed_cost_rules WHERE profileId = ?;`,
+  const customRules = await db.getAllAsync<{ keyword: string; overrideState: string }>(
+    `SELECT keyword, overrideState FROM fixed_cost_rules WHERE profileId = ?;`,
     [profileId]
   );
-  const customKeywords = customRules.map((r) => r.keyword.toUpperCase());
 
-  // 2. Check smart detected recurring patterns
+  const matchedRule = customRules.find((r) => targetUpper.includes(r.keyword.toUpperCase()));
+  if (matchedRule) {
+    return matchedRule.overrideState === 'FIXED';
+  }
+
   const detectedPatterns = await detectRecurringPatterns(db, 2, profileId);
   const detectedKeywords = detectedPatterns.map((p) => p.merchant.toUpperCase());
 
   const allFixedKeywords = new Set([
     ...DEFAULT_FIXED_KEYWORDS,
-    ...customKeywords,
     ...detectedKeywords,
   ]);
 
   return Array.from(allFixedKeywords).some((kw) => targetUpper.includes(kw));
 }
 
-export async function toggleFixedCostRule(
+export async function getTransactionFixedState(
   db: SQLiteDatabase,
-  keyword: string,
-  category: string = 'Subscriptions & Bills',
+  transaction: Transaction,
   profileId: number = 1
-): Promise<boolean> {
-  if (!db || !keyword) return false;
-  const kwUpper = keyword.toUpperCase().trim();
-  const currentlyFixed = await isTransactionFixed(db, kwUpper, profileId);
+): Promise<FixedOverrideState> {
+  if (!db || !transaction) return 'AUTO';
 
-  if (currentlyFixed) {
+  const uppercaseKeyword = (
+    transaction.merchant !== 'Unknown' ? transaction.merchant : transaction.rawDescription
+  ).toUpperCase().trim();
+
+  const customRule = await db.getFirstAsync<{ overrideState: FixedOverrideState }>(
+    `SELECT overrideState FROM fixed_cost_rules WHERE UPPER(keyword) = ? AND profileId = ?;`,
+    [uppercaseKeyword, profileId]
+  );
+
+  if (customRule) {
+    return customRule.overrideState;
+  }
+
+  return 'AUTO';
+}
+
+export async function setMerchantFixedOverride(
+  db: SQLiteDatabase,
+  merchantOrDesc: string,
+  category: string,
+  overrideState: FixedOverrideState,
+  profileId: number = 1
+): Promise<void> {
+  if (!db || !merchantOrDesc) return;
+  const uppercaseKeyword = merchantOrDesc.toUpperCase().trim();
+
+  if (overrideState === 'AUTO') {
     await db.runAsync(
-      `DELETE FROM fixed_cost_rules WHERE keyword = ? AND profileId = ?;`,
-      [kwUpper, profileId]
+      `DELETE FROM fixed_cost_rules WHERE UPPER(keyword) = ? AND profileId = ?;`,
+      [uppercaseKeyword, profileId]
     );
-    return false; // Now unfixed
+
+    const isAutoFixed = await isTransactionFixed(db, uppercaseKeyword, profileId);
+    const targetValue = isAutoFixed ? 1 : 0;
+
+    await db.runAsync(
+      `UPDATE transactions 
+       SET is_fixed = ? 
+       WHERE (UPPER(merchant) = ? OR UPPER(rawDescription) = ?) AND profileId = ?;`,
+      [targetValue, uppercaseKeyword, uppercaseKeyword, profileId]
+    );
   } else {
+    const isFixedVal = overrideState === 'FIXED' ? 1 : 0;
+
     await db.runAsync(
-      `INSERT OR REPLACE INTO fixed_cost_rules (profileId, keyword, category) VALUES (?, ?, ?);`,
-      [profileId, kwUpper, category]
+      `INSERT INTO fixed_cost_rules (keyword, category, overrideState, profileId) 
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(keyword, profileId) DO UPDATE SET overrideState = excluded.overrideState;`,
+      [uppercaseKeyword, category, overrideState, profileId]
     );
-    return true; // Now fixed
+
+    await db.runAsync(
+      `UPDATE transactions 
+       SET is_fixed = ? 
+       WHERE (UPPER(merchant) = ? OR UPPER(rawDescription) = ?) AND profileId = ?;`,
+      [isFixedVal, uppercaseKeyword, uppercaseKeyword, profileId]
+    );
   }
 }
 
 export async function getFixedOrFlexibleTransactions(
   db: SQLiteDatabase,
   monthName: string,
-  isFixedTarget: boolean,
-  profileId: number = 1
+  isFixed: boolean,
+  profileId: number
 ): Promise<Transaction[]> {
-  if (!db) return [];
-
-  try {
-    const customRules = await db.getAllAsync<{ keyword: string }>(
-      `SELECT keyword FROM fixed_cost_rules WHERE profileId = ?;`,
-      [profileId]
-    );
-    const detectedPatterns = await detectRecurringPatterns(db, 2, profileId);
-
-    const recurringKeywords = Array.from(
-      new Set([
-        ...DEFAULT_FIXED_KEYWORDS,
-        ...customRules.map((r) => r.keyword.toUpperCase()),
-        ...detectedPatterns.map((p) => p.merchant.toUpperCase()),
-      ])
-    );
-
-    const expenses = await db.getAllAsync<Transaction>(
-      `SELECT * FROM transactions WHERE monthName = ? AND profileId = ? AND amount < 0 ORDER BY ABS(amount) DESC;`,
+  if (isFixed) {
+    return await db.getAllAsync<Transaction>(
+      `SELECT * FROM transactions 
+       WHERE monthName = ? 
+         AND is_fixed = 1 
+         AND amount < 0 
+         AND profileId = ?
+       ORDER BY ABS(amount) DESC;`,
       [monthName, profileId]
     );
-
-    return expenses.filter((exp) => {
-      const descUpper = `${exp.rawDescription} ${exp.merchant}`.toUpperCase();
-      const isFixed = recurringKeywords.some((kw) => descUpper.includes(kw));
-      return isFixedTarget ? isFixed : !isFixed;
-    });
-  } catch (error) {
-    console.error('Error in getFixedOrFlexibleTransactions:', error);
-    return [];
+  } else {
+    return await db.getAllAsync<Transaction>(
+      `SELECT * FROM transactions 
+       WHERE monthName = ? 
+         AND (is_fixed = 0 OR is_fixed IS NULL) 
+         AND amount < 0 
+         AND profileId = ?
+       ORDER BY ABS(amount) DESC;`,
+      [monthName, profileId]
+    );
   }
 }
 
@@ -855,8 +838,8 @@ export async function getRecurringCandidates(
      FROM transactions
      WHERE profileId = ?
        AND merchant != 'Unknown'
-       AND merchant NOT IN (
-         SELECT DISTINCT keyword FROM fixed_cost_rules WHERE profileId = ?
+       AND UPPER(merchant) NOT IN (
+         SELECT DISTINCT UPPER(keyword) FROM fixed_cost_rules WHERE profileId = ?
        )
      GROUP BY merchant
      HAVING occurrenceCount >= 2
@@ -865,76 +848,4 @@ export async function getRecurringCandidates(
     [profileId, profileId]
   );
   return candidates || [];
-}
-
-export async function addFixedCostRule(
-  db: SQLiteDatabase,
-  keyword: string,
-  category: string,
-  profileId: number
-): Promise<void> {
-  const existing = await db.getFirstAsync<{ id: number }>(
-    `SELECT id FROM fixed_cost_rules WHERE keyword = ? AND profileId = ?;`,
-    [keyword, profileId]
-  );
-
-  if (!existing) {
-    await db.runAsync(
-      `INSERT INTO fixed_cost_rules (keyword, category, profileId) VALUES (?, ?, ?);`,
-      [keyword, category, profileId]
-    );
-  }
-}
-
-export async function getCategoryFixedVsFlexibleSummary(
-  db: SQLiteDatabase,
-  monthName: string,
-  category: string,
-  profileId: number
-): Promise<FixedCostSummary> {
-  const isAll = category === 'All';
-
-  const categoryFilter = isAll ? '' : 'AND t.category = ?';
-
-  const query = `
-    SELECT 
-      SUM(CASE WHEN EXISTS (
-        SELECT 1 FROM fixed_cost_rules r 
-        WHERE r.profileId = ? AND t.merchant LIKE '%' || r.keyword || '%'
-      ) THEN ABS(t.amount) ELSE 0 END) as fixedTotal,
-
-      SUM(CASE WHEN NOT EXISTS (
-        SELECT 1 FROM fixed_cost_rules r 
-        WHERE r.profileId = ? AND t.merchant LIKE '%' || r.keyword || '%'
-      ) THEN ABS(t.amount) ELSE 0 END) as flexibleTotal,
-
-      COUNT(CASE WHEN EXISTS (
-        SELECT 1 FROM fixed_cost_rules r 
-        WHERE r.profileId = ? AND t.merchant LIKE '%' || r.keyword || '%'
-      ) THEN 1 END) as fixedCount
-    FROM transactions t
-    WHERE t.profileId = ? AND t.monthName = ? ${categoryFilter};
-  `;
-
-  const queryParams = isAll
-    ? [profileId, profileId, profileId, profileId, monthName]
-    : [profileId, profileId, profileId, profileId, monthName, category];
-
-  const result = await db.getFirstAsync<{
-    fixedTotal: number;
-    flexibleTotal: number;
-    fixedCount: number;
-  }>(query, queryParams);
-
-  const fixedTotal = result?.fixedTotal || 0;
-  const flexibleTotal = result?.flexibleTotal || 0;
-  const total = fixedTotal + flexibleTotal;
-
-  return {
-    fixedTotal,
-    flexibleTotal,
-    fixedPercentage: total > 0 ? Math.round((fixedTotal / total) * 100) : 0,
-    flexiblePercentage: total > 0 ? Math.round((flexibleTotal / total) * 100) : 0,
-    fixedItemsCount: result?.fixedCount || 0,
-  };
 }

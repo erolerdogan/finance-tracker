@@ -42,14 +42,19 @@ export function TransactionListModal({
     const term = searchQuery.toLowerCase().trim();
     return (
       (trx.merchant && trx.merchant.toLowerCase().includes(term)) ||
-      (trx.rawDescription && trx.rawDescription.toLowerCase().includes(term)) ||
+      (trx.rawDescription &&
+        trx.rawDescription.toLowerCase().includes(term)) ||
       (trx.category && trx.category.toLowerCase().includes(term))
     );
   });
 
   return (
     <Modal visible={visible} transparent animationType="slide">
-      <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={onClose}>
+      <TouchableOpacity
+        style={styles.modalOverlay}
+        activeOpacity={1}
+        onPress={onClose}
+      >
         <TouchableWithoutFeedback>
           <View style={styles.flatListModalContainer}>
             <View style={styles.sheetHandle} />
@@ -62,13 +67,19 @@ export function TransactionListModal({
                 {listType === 'FLEXIBLE' && 'Flexible Spending'}
               </Text>
               <Text style={styles.flatListSubTitle}>
-                {monthNames[selectedMonth] || selectedMonth} • {filteredTransactions.length} items
+                {monthNames[selectedMonth] || selectedMonth} •{' '}
+                {filteredTransactions.length} items
               </Text>
             </View>
 
             {/* In-Modal Search Input Bar */}
             <View style={styles.modalSearchBox}>
-              <Ionicons name="search-outline" size={16} color="#8E8E93" style={{ marginRight: 8 }} />
+              <Ionicons
+                name="search-outline"
+                size={16}
+                color="#8E8E93"
+                style={{ marginRight: 8 }}
+              />
               <TextInput
                 style={styles.modalSearchInput}
                 placeholder="Search merchant or description..."
@@ -80,7 +91,11 @@ export function TransactionListModal({
             </View>
 
             {loading ? (
-              <ActivityIndicator size="small" color="#007AFF" style={{ marginVertical: 32 }} />
+              <ActivityIndicator
+                size="small"
+                color="#007AFF"
+                style={{ marginVertical: 32 }}
+              />
             ) : filteredTransactions.length === 0 ? (
               <View style={styles.emptyCard}>
                 <Text style={styles.emptyText}>No matching records found.</Text>
@@ -106,7 +121,9 @@ export function TransactionListModal({
                       />
                       <View style={{ flex: 1 }}>
                         <Text style={styles.flatTrxMerchant} numberOfLines={1}>
-                          {trx.merchant !== 'Unknown' ? trx.merchant : trx.rawDescription}
+                          {trx.merchant !== 'Unknown'
+                            ? trx.merchant
+                            : trx.rawDescription}
                         </Text>
                         <Text style={styles.flatTrxMeta}>
                           {trx.date} • {trx.category}
@@ -128,7 +145,10 @@ export function TransactionListModal({
               </ScrollView>
             )}
 
-            <TouchableOpacity style={styles.closeDetailButton} onPress={onClose}>
+            <TouchableOpacity
+              style={styles.closeDetailButton}
+              onPress={onClose}
+            >
               <Text style={styles.closeDetailButtonText}>Close</Text>
             </TouchableOpacity>
           </View>
@@ -139,7 +159,11 @@ export function TransactionListModal({
 }
 
 const styles = StyleSheet.create({
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'flex-end',
+  },
   flatListModalContainer: {
     backgroundColor: '#FFF',
     borderTopLeftRadius: 24,
@@ -147,7 +171,14 @@ const styles = StyleSheet.create({
     padding: 20,
     paddingBottom: 34,
   },
-  sheetHandle: { width: 36, height: 4, borderRadius: 2, backgroundColor: '#D1D1D6', marginBottom: 12, alignSelf: 'center' },
+  sheetHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#D1D1D6',
+    marginBottom: 12,
+    alignSelf: 'center',
+  },
   flatListHeader: { alignItems: 'center', marginBottom: 12 },
   flatListTitle: { fontSize: 18, fontWeight: '700', color: '#1C1C1E' },
   flatListSubTitle: { fontSize: 12, color: '#8E8E93', marginTop: 2 },
@@ -161,7 +192,12 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   modalSearchInput: { flex: 1, fontSize: 14, color: '#1C1C1E' },
-  emptyCard: { backgroundColor: '#FFF', borderRadius: 16, padding: 24, alignItems: 'center' },
+  emptyCard: {
+    backgroundColor: '#FFF',
+    borderRadius: 16,
+    padding: 24,
+    alignItems: 'center',
+  },
   emptyText: { fontSize: 13, color: '#8E8E93' },
   flatTrxRow: {
     flexDirection: 'row',
@@ -171,7 +207,12 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: '#E5E5EA',
   },
-  flatTrxLeft: { flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 8 },
+  flatTrxLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    marginRight: 8,
+  },
   categoryBadgeDot: { width: 8, height: 8, borderRadius: 4, marginRight: 10 },
   flatTrxMerchant: { fontSize: 14, fontWeight: '600', color: '#1C1C1E' },
   flatTrxMeta: { fontSize: 11, color: '#8E8E93', marginTop: 2 },

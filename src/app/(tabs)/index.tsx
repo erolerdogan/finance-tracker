@@ -10,17 +10,18 @@ import {
   CategoryTotal,
   clearAllTransactions,
   FixedCostSummary,
+  FixedOverrideState,
   getAvailableMonths,
   getFilteredTransactions,
   getFixedOrFlexibleTransactions,
   getFixedVsFlexibleSummary,
   getMonthlyCategoryTotals,
   getMonthlySummary,
+  getTransactionFixedState,
   getTransactionsByMonthAndCategory,
   insertTransactions,
-  isTransactionFixed,
   MonthlySummary,
-  toggleFixedCostRule,
+  setMerchantFixedOverride,
   Transaction
 } from '@/db/database';
 import { cancelCurrentMonthReminders } from '@/utils/notifications';
@@ -84,7 +85,6 @@ export default function DashboardScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  // Concurrency Guard Lock
   const isPickingRef = useRef(false);
 
   // Modals & Selection State
@@ -92,9 +92,9 @@ export default function DashboardScreen() {
   const [actionMenuVisible, setActionMenuVisible] = useState(false);
   const [profileModalVisible, setProfileModalVisible] = useState(false);
   const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
-  const [isCurrentTrxFixed, setIsCurrentTrxFixed] = useState(false);
+  const [currentFixedState, setCurrentFixedState] = useState<FixedOverrideState>('AUTO');
 
-  // Card Modal State (Flat Income/Expense List)
+  // Card Modal State
   const [listModalVisible, setListModalVisible] = useState(false);
   const [listModalType, setListModalType] = useState<'INCOME' | 'EXPENSE' | 'FIXED' | 'FLEXIBLE'>('EXPENSE');
   const [listModalTransactions, setListModalTransactions] = useState<Transaction[]>([]);
@@ -126,7 +126,6 @@ export default function DashboardScreen() {
   const [expandedCategories, setExpandedCategories] = useState<Record<string, boolean>>({});
   const [selectedBarCategory, setSelectedBarCategory] = useState<string | null>(null);
 
-  // In-line sub-transactions cache
   const [categoryTransactionsMap, setCategoryTransactionsMap] = useState<Record<string, Transaction[]>>({});
   const [loadingTransactionsMap, setLoadingTransactionsMap] = useState<Record<string, boolean>>({});
 
@@ -168,7 +167,6 @@ export default function DashboardScreen() {
       setCategoryData(categoryRes || []);
       setFixedSummary(fixedRes);
 
-      // Compute Month Coverage Status
       if (!dateRangeRes || !dateRangeRes.minDate) {
         setCoverageStatus({ status: 'EMPTY', label: 'Statement Pending' });
       } else {
@@ -243,9 +241,8 @@ export default function DashboardScreen() {
   const handleSelectTransaction = async (trx: Transaction) => {
     setSelectedTransaction(trx);
     if (db && trx) {
-      const keyword = trx.merchant !== 'Unknown' ? trx.merchant : trx.rawDescription;
-      const isFixed = await isTransactionFixed(db, keyword, activeProfileId);
-      setIsCurrentTrxFixed(isFixed);
+      const overrideState = await getTransactionFixedState(db, trx, activeProfileId);
+      setCurrentFixedState(overrideState);
     }
   };
 
@@ -256,17 +253,27 @@ export default function DashboardScreen() {
     }, 200);
   };
 
-  const handleToggleFixedCost = async () => {
+  const handleSelectFixedState = async (newState: FixedOverrideState) => {
     if (!db || !selectedTransaction) return;
+
+    setCurrentFixedState(newState);
+
     const keyword =
       selectedTransaction.merchant !== 'Unknown'
         ? selectedTransaction.merchant
         : selectedTransaction.rawDescription;
 
-    const newState = await toggleFixedCostRule(db, keyword, selectedTransaction.category, activeProfileId);
-    setIsCurrentTrxFixed(newState);
+    try {
+      await setMerchantFixedOverride(
+        db,
+        keyword,
+        selectedTransaction.category,
+        newState,
+        activeProfileId
+      );
 
-    setTimeout(async () => {
+      setCategoryTransactionsMap({});
+
       if (listModalVisible) {
         if (listModalType === 'FIXED' || listModalType === 'FLEXIBLE') {
           const isFixedTarget = listModalType === 'FIXED';
@@ -279,8 +286,11 @@ export default function DashboardScreen() {
           setListModalTransactions(updatedItems);
         }
       }
+
       await loadDashboardData();
-    }, 100);
+    } catch (error) {
+      console.error('Failed to update fixed state override:', error);
+    }
   };
 
   const handleOpenCardModal = async (type: 'INCOME' | 'EXPENSE' | 'FIXED' | 'FLEXIBLE') => {
@@ -461,7 +471,7 @@ export default function DashboardScreen() {
           contentContainerStyle={styles.content}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />}
         >
-          {/* Header Bar with Active Profile Pill */}
+          {/* Header Bar */}
           <View style={styles.headerRow}>
             <View style={styles.headerLeftGroup}>
               <Text style={styles.title}>Dashboard</Text>
@@ -513,7 +523,7 @@ export default function DashboardScreen() {
             onBarPress={handleBarPress}
           />
 
-          {/* Comprehensive Fixed vs Flexible Dashboard Board */}
+          {/* Fixed vs Flexible Board */}
           <FixedFlexibleCard
             summary={fixedSummary}
             onPress={() => handleOpenCardModal('EXPENSE')}
@@ -529,7 +539,6 @@ export default function DashboardScreen() {
           {loading && !refreshing ? (
             <ActivityIndicator size="small" color="#007AFF" style={{ marginTop: 24 }} />
           ) : displayedCategories.length === 0 ? (
-            /* Awaiting Statement Call-To-Action Empty State Card */
             <View style={styles.pendingCard}>
               <View style={styles.pendingIconCircle}>
                 <Ionicons name="document-text-outline" size={26} color="#007AFF" />
@@ -595,7 +604,6 @@ export default function DashboardScreen() {
                       </View>
                     </TouchableOpacity>
 
-                    {/* Inline Sub-Transactions */}
                     {isExpanded && (
                       <View style={styles.transactionsContainer}>
                         {isTrxLoading ? (
@@ -634,7 +642,6 @@ export default function DashboardScreen() {
           )}
         </ScrollView>
 
-        {/* Floating Action Button */}
         <TouchableOpacity
           style={styles.fabButton}
           activeOpacity={0.8}
@@ -643,13 +650,11 @@ export default function DashboardScreen() {
           <Ionicons name="options-outline" size={24} color="#FFFFFF" />
         </TouchableOpacity>
 
-        {/* Profile Switcher Bottom Sheet Modal */}
         <ProfileSwitcherModal
           visible={profileModalVisible}
           onClose={() => setProfileModalVisible(false)}
         />
 
-        {/* Extracted Flat List Bottom Sheet Modal */}
         <TransactionListModal
           visible={listModalVisible}
           listType={listModalType}
@@ -661,16 +666,14 @@ export default function DashboardScreen() {
           onSelectTransaction={handleSelectFromFlatList}
         />
 
-        {/* Extracted Transaction Detail Modal */}
         <TransactionDetailModal
           visible={selectedTransaction !== null}
           transaction={selectedTransaction}
-          isFixed={isCurrentTrxFixed}
+          fixedState={currentFixedState}
           onClose={() => setSelectedTransaction(null)}
-          onToggleFixed={handleToggleFixedCost}
+          onSelectFixedState={handleSelectFixedState}
         />
 
-        {/* Action Menu Sheet */}
         <Modal visible={actionMenuVisible} transparent animationType="fade">
           <TouchableOpacity
             style={styles.modalOverlay}
@@ -703,7 +706,6 @@ export default function DashboardScreen() {
           </TouchableOpacity>
         </Modal>
 
-        {/* Month Selection Modal */}
         <Modal visible={monthPickerVisible} transparent animationType="slide">
           <TouchableOpacity
             style={styles.modalOverlay}

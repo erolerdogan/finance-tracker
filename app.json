@@ -9,13 +9,7 @@
     "userInterfaceStyle": "automatic",
     "ios": {
       "icon": "./assets/expo.icon",
-      "bundleIdentifier": "com.financialaid.app",
-      "infoPlist": {
-        "UIApplicationSceneManifest": {
-          "UIApplicationSupportsMultipleScenes": false,
-          "UISceneConfigurations": {}
-        }
-      }
+      "bundleIdentifier": "com.financialaid.app"
     },
     "android": {
       "package": "com.financialaid.app",

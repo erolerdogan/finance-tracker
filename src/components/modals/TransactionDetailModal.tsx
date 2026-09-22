@@ -1,30 +1,29 @@
 import { getCategoryColor } from '@/constants/colors';
-import { Transaction } from '@/db/database';
+import { FixedOverrideState, Transaction } from '@/db/database';
 import React from 'react';
 import {
-    Modal,
-    StyleSheet,
-    Switch,
-    Text,
-    TouchableOpacity,
-    TouchableWithoutFeedback,
-    View
+  Modal,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  TouchableWithoutFeedback,
+  View
 } from 'react-native';
 
 interface TransactionDetailModalProps {
   visible: boolean;
   transaction: Transaction | null;
-  isFixed: boolean;
+  fixedState: FixedOverrideState;
   onClose: () => void;
-  onToggleFixed: () => void;
+  onSelectFixedState: (newState: FixedOverrideState) => void;
 }
 
 export function TransactionDetailModal({
   visible,
   transaction,
-  isFixed,
+  fixedState,
   onClose,
-  onToggleFixed,
+  onSelectFixedState,
 }: TransactionDetailModalProps) {
   return (
     <Modal visible={visible} transparent animationType="slide">
@@ -80,20 +79,41 @@ export function TransactionDetailModal({
                   </View>
                 </View>
 
-                {/* Fixed / Recurring Switch Toggle */}
-                <View style={styles.toggleRow}>
-                  <View style={{ flex: 1, marginRight: 12 }}>
-                    <Text style={styles.toggleTitle}>Mark as Fixed / Recurring</Text>
-                    <Text style={styles.toggleSubtitle}>
-                      Treat matches for "{transaction.merchant !== 'Unknown' ? transaction.merchant : 'this item'}" as fixed monthly commitments.
-                    </Text>
+                {/* Explicit 3-State Segmented Picker */}
+                <View style={styles.segmentedContainer}>
+                  <Text style={styles.toggleTitle}>Cost Classification</Text>
+                  <Text style={styles.toggleSubtitle}>
+                    Select how matches for "{transaction.merchant !== 'Unknown' ? transaction.merchant : 'this item'}" are treated.
+                  </Text>
+
+                  <View style={styles.segmentGroup}>
+                    <TouchableOpacity
+                      style={[styles.segmentBtn, fixedState === 'AUTO' && styles.segmentBtnActive]}
+                      onPress={() => onSelectFixedState('AUTO')}
+                    >
+                      <Text style={[styles.segmentText, fixedState === 'AUTO' && styles.segmentTextActive]}>
+                        Auto
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[styles.segmentBtn, fixedState === 'FIXED' && styles.segmentBtnActive]}
+                      onPress={() => onSelectFixedState('FIXED')}
+                    >
+                      <Text style={[styles.segmentText, fixedState === 'FIXED' && styles.segmentTextActive]}>
+                        Fixed
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[styles.segmentBtn, fixedState === 'FLEXIBLE' && styles.segmentBtnActive]}
+                      onPress={() => onSelectFixedState('FLEXIBLE')}
+                    >
+                      <Text style={[styles.segmentText, fixedState === 'FLEXIBLE' && styles.segmentTextActive]}>
+                        Flexible
+                      </Text>
+                    </TouchableOpacity>
                   </View>
-                  <Switch
-                    value={isFixed}
-                    onValueChange={onToggleFixed}
-                    trackColor={{ false: '#E5E5EA', true: '#007AFF' }}
-                    thumbColor="#FFFFFF"
-                  />
                 </View>
               </View>
             )}
@@ -130,10 +150,8 @@ const styles = StyleSheet.create({
   detailCategoryBadge: { flexDirection: 'row', alignItems: 'center', marginTop: 2 },
   colorDot: { width: 10, height: 10, borderRadius: 5, marginRight: 8 },
   detailCategoryText: { fontSize: 14, fontWeight: '600', color: '#1C1C1E' },
-  toggleRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+  
+  segmentedContainer: {
     backgroundColor: '#F2F2F7',
     borderRadius: 12,
     padding: 12,
@@ -141,7 +159,37 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   toggleTitle: { fontSize: 14, fontWeight: '600', color: '#1C1C1E' },
-  toggleSubtitle: { fontSize: 11, color: '#8E8E93', marginTop: 2, lineHeight: 15 },
+  toggleSubtitle: { fontSize: 11, color: '#8E8E93', marginTop: 2, marginBottom: 10, lineHeight: 15 },
+  segmentGroup: {
+    flexDirection: 'row',
+    backgroundColor: '#E5E5EA',
+    borderRadius: 8,
+    padding: 2,
+  },
+  segmentBtn: {
+    flex: 1,
+    paddingVertical: 8,
+    alignItems: 'center',
+    borderRadius: 6,
+  },
+  segmentBtnActive: {
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.15,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  segmentText: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#8E8E93',
+  },
+  segmentTextActive: {
+    color: '#007AFF',
+    fontWeight: '700',
+  },
+
   closeDetailButton: {
     backgroundColor: '#F2F2F7',
     borderRadius: 12,
