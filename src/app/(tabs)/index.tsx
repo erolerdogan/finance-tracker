@@ -1,5 +1,5 @@
 import { AllocationChart } from '@/components/dashboard/AllocationChart';
-import { CommitmentLink } from '@/components/dashboard/CommitmentLink';
+import { FixedFlexibleCard } from '@/components/dashboard/FixedFlexibleCard';
 import { MonthStepper } from '@/components/dashboard/MonthStepper';
 import { SummaryCards } from '@/components/dashboard/SummaryCards';
 import { TransactionDetailModal } from '@/components/modals/TransactionDetailModal';
@@ -513,8 +513,11 @@ export default function DashboardScreen() {
             onBarPress={handleBarPress}
           />
 
-          {/* Compact 1-Line Fixed vs Flexible Link */}
-          <CommitmentLink fixedSummary={fixedSummary} />
+          {/* Comprehensive Fixed vs Flexible Dashboard Board */}
+          <FixedFlexibleCard
+            summary={fixedSummary}
+            onPress={() => handleOpenCardModal('EXPENSE')}
+          />
 
           {/* Category Breakdown */}
           <View style={styles.sectionHeaderRow}>
@@ -782,7 +785,7 @@ const styles = StyleSheet.create({
   },
   goalsHeaderText: { fontSize: 13, fontWeight: '600', color: '#007AFF' },
 
-  sectionHeaderRow: { marginBottom: 10 },
+  sectionHeaderRow: { marginBottom: 10, marginTop: 12 },
   sectionTitle: { fontSize: 16, fontWeight: '600', color: '#1C1C1E' },
   categoryCardList: {
     backgroundColor: '#FFF',

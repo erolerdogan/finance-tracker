@@ -1,15 +1,15 @@
 {
   "expo": {
     "name": "Financial Aid",
-    "slug": "fintrackmobile",
+    "slug": "financial-aid",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "fintrackmobile",
+    "scheme": "financial-aid",
     "userInterfaceStyle": "automatic",
     "ios": {
       "icon": "./assets/expo.icon",
-      "bundleIdentifier": "com.anonymous.FinTrackMobile",
+      "bundleIdentifier": "com.financialaid.app",
       "infoPlist": {
         "UIApplicationSceneManifest": {
           "UIApplicationSupportsMultipleScenes": false,
@@ -18,6 +18,7 @@
       }
     },
     "android": {
+      "package": "com.financialaid.app",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -52,6 +53,12 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "fc7bf32c-70df-4460-8b01-f0083f9ae8bb"
+      }
     }
   }
 }
