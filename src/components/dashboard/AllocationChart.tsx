@@ -5,10 +5,11 @@ import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { BarChart } from 'react-native-gifted-charts';
 
 function formatCompactCurrency(val: number): string {
-  if (val >= 1000) {
-    return `€${(val / 1000).toFixed(1)}k`;
+  const roundedVal = Math.round(val);
+  if (roundedVal >= 1000) {
+    return `€${(roundedVal / 1000).toFixed(1)}k`;
   }
-  return `€${Math.round(val)}`;
+  return `€${roundedVal}`;
 }
 
 interface AllocationChartProps {

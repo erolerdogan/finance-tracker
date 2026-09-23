@@ -21,7 +21,7 @@ export interface Transaction {
   userOverridden?: number;
   isZeroFlagged?: number;
   dateAmbiguous?: number;
-  is_fixed?: number | null; // null/undefined = AUTO, 1 = FIXED, 0 = FLEXIBLE
+  is_fixed?: number | null; // null = AUTO, 1 = FIXED, 0 = FLEXIBLE
 }
 
 export interface CategoryTotal {
@@ -216,22 +216,34 @@ export async function getFixedVsFlexibleSummary(
   monthName: string,
   profileId: number
 ): Promise<FixedCostSummary> {
-  const result = await db.getFirstAsync<{
-    fixedTotal: number;
-    flexibleTotal: number;
-    fixedCount: number;
-  }>(
-    `SELECT 
-       COALESCE(SUM(CASE WHEN is_fixed = 1 AND amount < 0 THEN ABS(amount) ELSE 0 END), 0) as fixedTotal,
-       COALESCE(SUM(CASE WHEN (is_fixed = 0 OR is_fixed IS NULL) AND amount < 0 THEN ABS(amount) ELSE 0 END), 0) as flexibleTotal,
-       COALESCE(SUM(CASE WHEN is_fixed = 1 AND amount < 0 THEN 1 ELSE 0 END), 0) as fixedCount
-     FROM transactions 
-     WHERE monthName = ? AND profileId = ?;`,
+  const transactions = await db.getAllAsync<Transaction>(
+    `SELECT * FROM transactions WHERE monthName = ? AND profileId = ? AND amount < 0;`,
     [monthName, profileId]
   );
 
-  const fixedTotal = result?.fixedTotal ?? 0;
-  const flexibleTotal = result?.flexibleTotal ?? 0;
+  let fixedTotal = 0;
+  let flexibleTotal = 0;
+  let fixedCount = 0;
+
+  for (const tx of transactions) {
+    const absAmount = Math.abs(tx.amount);
+    if (tx.is_fixed === 1) {
+      fixedTotal += absAmount;
+      fixedCount++;
+    } else if (tx.is_fixed === 0) {
+      flexibleTotal += absAmount;
+    } else {
+      const keyword = tx.merchant !== 'Unknown' ? tx.merchant : tx.rawDescription;
+      const isAutoFixed = await isTransactionFixed(db, keyword, profileId);
+      if (isAutoFixed) {
+        fixedTotal += absAmount;
+        fixedCount++;
+      } else {
+        flexibleTotal += absAmount;
+      }
+    }
+  }
+
   const grandTotal = fixedTotal + flexibleTotal;
 
   return {
@@ -239,7 +251,61 @@ export async function getFixedVsFlexibleSummary(
     flexibleTotal,
     fixedPercentage: grandTotal > 0 ? (fixedTotal / grandTotal) * 100 : 0,
     flexiblePercentage: grandTotal > 0 ? (flexibleTotal / grandTotal) * 100 : 0,
-    fixedItemsCount: result?.fixedCount ?? 0,
+    fixedItemsCount: fixedCount,
+  };
+}
+
+export async function getCategoryFixedVsFlexibleSummary(
+  db: SQLiteDatabase,
+  monthName: string,
+  category: string,
+  profileId: number = 1
+): Promise<FixedCostSummary> {
+  const isAll = category === 'All' || category === 'ALL';
+  const categoryFilter = isAll ? '' : 'AND category = ?';
+
+  const query = `
+    SELECT * FROM transactions 
+    WHERE profileId = ? AND monthName = ? ${categoryFilter} AND amount < 0;
+  `;
+
+  const queryParams = isAll
+    ? [profileId, monthName]
+    : [profileId, monthName, category];
+
+  const transactions = await db.getAllAsync<Transaction>(query, queryParams);
+
+  let fixedTotal = 0;
+  let flexibleTotal = 0;
+  let fixedCount = 0;
+
+  for (const tx of transactions) {
+    const absAmount = Math.abs(tx.amount);
+    if (tx.is_fixed === 1) {
+      fixedTotal += absAmount;
+      fixedCount++;
+    } else if (tx.is_fixed === 0) {
+      flexibleTotal += absAmount;
+    } else {
+      const keyword = tx.merchant !== 'Unknown' ? tx.merchant : tx.rawDescription;
+      const isAutoFixed = await isTransactionFixed(db, keyword, profileId);
+      if (isAutoFixed) {
+        fixedTotal += absAmount;
+        fixedCount++;
+      } else {
+        flexibleTotal += absAmount;
+      }
+    }
+  }
+
+  const grandTotal = fixedTotal + flexibleTotal;
+
+  return {
+    fixedTotal,
+    flexibleTotal,
+    fixedPercentage: grandTotal > 0 ? (fixedTotal / grandTotal) * 100 : 0,
+    flexiblePercentage: grandTotal > 0 ? (flexibleTotal / grandTotal) * 100 : 0,
+    fixedItemsCount: fixedCount,
   };
 }
 
@@ -305,13 +371,10 @@ export async function insertTransactions(
 ): Promise<void> {
   await db.withTransactionAsync(async () => {
     for (const tx of transactions) {
-      const keyword = tx.merchant !== 'Unknown' ? tx.merchant : tx.rawDescription;
-      const initialFixedState = await isTransactionFixed(db, keyword, profileId);
-
       await db.runAsync(
         `INSERT INTO transactions
            (profileId, date, amount, rawDescription, merchant, category, monthName, isZeroFlagged, dateAmbiguous, is_fixed)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL);`,
         [
           tx.profileId ?? profileId,
           tx.date,
@@ -322,7 +385,6 @@ export async function insertTransactions(
           tx.monthName,
           tx.isZeroFlagged ?? 0,
           tx.dateAmbiguous ?? 0,
-          initialFixedState ? 1 : 0,
         ]
       );
     }
@@ -754,6 +816,7 @@ export async function setMerchantFixedOverride(
 ): Promise<void> {
   if (!db || !merchantOrDesc) return;
   const uppercaseKeyword = merchantOrDesc.toUpperCase().trim();
+  const searchPattern = `%${uppercaseKeyword}%`;
 
   if (overrideState === 'AUTO') {
     await db.runAsync(
@@ -761,14 +824,11 @@ export async function setMerchantFixedOverride(
       [uppercaseKeyword, profileId]
     );
 
-    const isAutoFixed = await isTransactionFixed(db, uppercaseKeyword, profileId);
-    const targetValue = isAutoFixed ? 1 : 0;
-
     await db.runAsync(
       `UPDATE transactions 
-       SET is_fixed = ? 
-       WHERE (UPPER(merchant) = ? OR UPPER(rawDescription) = ?) AND profileId = ?;`,
-      [targetValue, uppercaseKeyword, uppercaseKeyword, profileId]
+       SET is_fixed = NULL 
+       WHERE (UPPER(merchant) LIKE ? OR UPPER(rawDescription) LIKE ?) AND profileId = ?;`,
+      [searchPattern, searchPattern, profileId]
     );
   } else {
     const isFixedVal = overrideState === 'FIXED' ? 1 : 0;
@@ -783,10 +843,31 @@ export async function setMerchantFixedOverride(
     await db.runAsync(
       `UPDATE transactions 
        SET is_fixed = ? 
-       WHERE (UPPER(merchant) = ? OR UPPER(rawDescription) = ?) AND profileId = ?;`,
-      [isFixedVal, uppercaseKeyword, uppercaseKeyword, profileId]
+       WHERE (UPPER(merchant) LIKE ? OR UPPER(rawDescription) LIKE ?) AND profileId = ?;`,
+      [isFixedVal, searchPattern, searchPattern, profileId]
     );
   }
+}
+
+export async function addFixedCostRule(
+  db: SQLiteDatabase,
+  keyword: string,
+  category: string,
+  profileId: number = 1
+): Promise<void> {
+  await setMerchantFixedOverride(db, keyword, category, 'FIXED', profileId);
+}
+
+export async function toggleFixedCostRule(
+  db: SQLiteDatabase,
+  keyword: string,
+  category: string,
+  profileId: number = 1
+): Promise<boolean> {
+  const currentState = await isTransactionFixed(db, keyword, profileId);
+  const newState: FixedOverrideState = currentState ? 'FLEXIBLE' : 'FIXED';
+  await setMerchantFixedOverride(db, keyword, category, newState, profileId);
+  return newState === 'FIXED';
 }
 
 export async function getFixedOrFlexibleTransactions(
@@ -795,27 +876,38 @@ export async function getFixedOrFlexibleTransactions(
   isFixed: boolean,
   profileId: number
 ): Promise<Transaction[]> {
-  if (isFixed) {
-    return await db.getAllAsync<Transaction>(
-      `SELECT * FROM transactions 
-       WHERE monthName = ? 
-         AND is_fixed = 1 
-         AND amount < 0 
-         AND profileId = ?
-       ORDER BY ABS(amount) DESC;`,
-      [monthName, profileId]
-    );
-  } else {
-    return await db.getAllAsync<Transaction>(
-      `SELECT * FROM transactions 
-       WHERE monthName = ? 
-         AND (is_fixed = 0 OR is_fixed IS NULL) 
-         AND amount < 0 
-         AND profileId = ?
-       ORDER BY ABS(amount) DESC;`,
-      [monthName, profileId]
-    );
+  const allExpenses = await db.getAllAsync<Transaction>(
+    `SELECT * FROM transactions 
+     WHERE monthName = ? 
+       AND amount < 0 
+       AND profileId = ?
+     ORDER BY ABS(amount) DESC;`,
+    [monthName, profileId]
+  );
+
+  const filteredItems: Transaction[] = [];
+
+  for (const tx of allExpenses) {
+    if (isFixed) {
+      if (tx.is_fixed === 1) {
+        filteredItems.push(tx);
+      } else if (tx.is_fixed === null || tx.is_fixed === undefined) {
+        const keyword = tx.merchant !== 'Unknown' ? tx.merchant : tx.rawDescription;
+        const isAutoFixed = await isTransactionFixed(db, keyword, profileId);
+        if (isAutoFixed) filteredItems.push(tx);
+      }
+    } else {
+      if (tx.is_fixed === 0) {
+        filteredItems.push(tx);
+      } else if (tx.is_fixed === null || tx.is_fixed === undefined) {
+        const keyword = tx.merchant !== 'Unknown' ? tx.merchant : tx.rawDescription;
+        const isAutoFixed = await isTransactionFixed(db, keyword, profileId);
+        if (!isAutoFixed) filteredItems.push(tx);
+      }
+    }
   }
+
+  return filteredItems;
 }
 
 export interface RecurringCandidate {

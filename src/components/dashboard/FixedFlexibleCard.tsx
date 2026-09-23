@@ -10,6 +10,9 @@ interface FixedFlexibleCardProps {
 export function FixedFlexibleCard({ summary, onPress }: FixedFlexibleCardProps) {
   const { fixedTotal, flexibleTotal, fixedPercentage, flexiblePercentage, fixedItemsCount } = summary;
 
+  const displayFixedPct = Math.round(fixedPercentage);
+  const displayFlexiblePct = Math.round(flexiblePercentage);
+
   return (
     <TouchableOpacity style={styles.cardContainer} activeOpacity={0.8} onPress={onPress}>
       {/* Header */}
@@ -17,7 +20,7 @@ export function FixedFlexibleCard({ summary, onPress }: FixedFlexibleCardProps) 
         <View>
           <Text style={styles.cardTitle}>Fixed vs. Flexible</Text>
           <Text style={styles.cardSubtitle}>
-            {fixedPercentage}% of total spending is locked in
+            {displayFixedPct}% of total spending is locked in
           </Text>
         </View>
         <View style={styles.badge}>
@@ -27,8 +30,8 @@ export function FixedFlexibleCard({ summary, onPress }: FixedFlexibleCardProps) 
 
       {/* Two-Tone Progress Bar */}
       <View style={styles.barContainer}>
-        <View style={[styles.fixedBar, { width: `${fixedPercentage}%` }]} />
-        <View style={[styles.flexibleBar, { width: `${flexiblePercentage}%` }]} />
+        <View style={[styles.fixedBar, { width: `${displayFixedPct}%` }]} />
+        <View style={[styles.flexibleBar, { width: `${displayFlexiblePct}%` }]} />
       </View>
 
       {/* Metrics Row */}
@@ -40,7 +43,7 @@ export function FixedFlexibleCard({ summary, onPress }: FixedFlexibleCardProps) 
             <Text style={styles.statLabel}>Fixed Overhead</Text>
           </View>
           <Text style={styles.statAmount}>€{fixedTotal.toFixed(0)}</Text>
-          <Text style={styles.statPercent}>{fixedPercentage}% of expenses</Text>
+          <Text style={styles.statPercent}>{displayFixedPct}% of expenses</Text>
         </View>
 
         <View style={styles.divider} />
@@ -52,7 +55,7 @@ export function FixedFlexibleCard({ summary, onPress }: FixedFlexibleCardProps) 
             <Text style={styles.statLabel}>Flexible Spending</Text>
           </View>
           <Text style={styles.statAmount}>€{flexibleTotal.toFixed(0)}</Text>
-          <Text style={styles.statPercent}>{flexiblePercentage}% of expenses</Text>
+          <Text style={styles.statPercent}>{displayFlexiblePct}% of expenses</Text>
         </View>
       </View>
     </TouchableOpacity>
@@ -64,7 +67,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFF',
     borderRadius: 20,
     padding: 16,
-    marginHorizontal: 16,
     marginVertical: 8,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },

@@ -561,7 +561,7 @@ export default function DashboardScreen() {
           ) : (
             <View style={styles.categoryCardList}>
               {displayedCategories.map((item, index) => {
-                const percentOfTotal = grandTotal > 0 ? ((item.totalAmount / grandTotal) * 100).toFixed(1) : '0';
+                const percentOfTotal = grandTotal > 0 ? Math.round((item.totalAmount / grandTotal) * 100) : 0;
                 const catColor = getCategoryColor(item.category);
                 const isLast = index === displayedCategories.length - 1;
                 const isExpanded = !!expandedCategories[item.category];

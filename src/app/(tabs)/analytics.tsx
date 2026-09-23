@@ -2,15 +2,15 @@ import { TransactionDetailModal } from '@/components/modals/TransactionDetailMod
 import { TransactionListModal } from '@/components/modals/TransactionListModal';
 import { getCategoryColor } from '@/constants/colors';
 import {
-  addFixedCostRule,
   FixedCostSummary,
+  FixedOverrideState,
   getCategoryFixedVsFlexibleSummary,
   getMonthlyCategoryTotals,
   getRecurringCandidates,
+  getTransactionFixedState,
   getTransactionsByMonthAndCategory,
-  isTransactionFixed,
   RecurringCandidate,
-  toggleFixedCostRule,
+  setMerchantFixedOverride,
   Transaction
 } from '@/db/database';
 import { Ionicons } from '@expo/vector-icons';
@@ -94,7 +94,7 @@ export default function AnalyticsScreen() {
   const [loadingModalTrx, setLoadingModalTrx] = useState(false);
 
   const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
-  const [isCurrentTrxFixed, setIsCurrentTrxFixed] = useState(false);
+  const [currentFixedState, setCurrentFixedState] = useState<FixedOverrideState>('AUTO');
 
   const [summary, setSummary] = useState({
     total: 0,
@@ -216,39 +216,38 @@ export default function AnalyticsScreen() {
   const handleSelectTransactionFromModal = async (trx: Transaction) => {
     setSelectedTransaction(trx);
     if (db) {
-      const keyword = trx.merchant !== 'Unknown' ? trx.merchant : trx.rawDescription;
-      const isFixed = await isTransactionFixed(db, keyword, activeProfileId);
-      setIsCurrentTrxFixed(isFixed);
+      const fixedState = await getTransactionFixedState(db, trx, activeProfileId);
+      setCurrentFixedState(fixedState);
     }
   };
 
-  const handleToggleFixedCostInDetail = async () => {
+  const handleSelectFixedStateInDetail = async (newState: FixedOverrideState) => {
     if (!db || !selectedTransaction) return;
     const keyword =
       selectedTransaction.merchant !== 'Unknown'
         ? selectedTransaction.merchant
         : selectedTransaction.rawDescription;
 
-    const newState = await toggleFixedCostRule(
+    await setMerchantFixedOverride(
       db,
       keyword,
       selectedTransaction.category,
+      newState,
       activeProfileId
     );
-    setIsCurrentTrxFixed(newState);
 
-    setTimeout(async () => {
-      if (selectedMonthForModal) {
-        const updated = await getTransactionsByMonthAndCategory(
-          db,
-          selectedMonthForModal,
-          selectedCategory,
-          activeProfileId
-        );
-        setModalTransactions(updated || []);
-      }
-      await loadAnalyticsData();
-    }, 100);
+    setCurrentFixedState(newState);
+
+    if (selectedMonthForModal) {
+      const updated = await getTransactionsByMonthAndCategory(
+        db,
+        selectedMonthForModal,
+        selectedCategory,
+        activeProfileId
+      );
+      setModalTransactions(updated || []);
+    }
+    await loadAnalyticsData();
   };
 
   const toggleCandidateSelection = (merchant: string) => {
@@ -269,7 +268,7 @@ export default function AnalyticsScreen() {
     try {
       setLoading(true);
       for (const item of itemsToApprove) {
-        await addFixedCostRule(db, item.merchant, item.category, activeProfileId);
+        await setMerchantFixedOverride(db, item.merchant, item.category, 'FIXED', activeProfileId);
       }
 
       const approvedSet = new Set(itemsToApprove.map((i) => i.merchant));
@@ -597,9 +596,9 @@ export default function AnalyticsScreen() {
         <TransactionDetailModal
           visible={selectedTransaction !== null}
           transaction={selectedTransaction}
-          isFixed={isCurrentTrxFixed}
+          fixedState={currentFixedState}
           onClose={() => setSelectedTransaction(null)}
-          onToggleFixed={handleToggleFixedCostInDetail}
+          onSelectFixedState={handleSelectFixedStateInDetail}
         />
       </View>
     </SafeAreaView>
