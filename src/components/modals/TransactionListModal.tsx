@@ -5,10 +5,13 @@ import { useSQLiteContext } from 'expo-sqlite';
 import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   TouchableWithoutFeedback,
   View
@@ -40,13 +43,14 @@ export function TransactionListModal({
   profileId = 1,
 }: TransactionListModalProps) {
   const db = useSQLiteContext();
+  const [searchQuery, setSearchQuery] = useState('');
   const [filterMode, setFilterMode] = useState<ExpenseFilterMode>('ALL');
   const [fixedStateMap, setFixedStateMap] = useState<Record<number, boolean>>({});
   const [evaluatingFixed, setEvaluatingFixed] = useState(false);
 
-  // Reset filter when opening/changing modal type
   useEffect(() => {
     if (visible) {
+      setSearchQuery('');
       if (listType === 'FIXED') {
         setFilterMode('FIXED');
       } else if (listType === 'FLEXIBLE') {
@@ -57,7 +61,6 @@ export function TransactionListModal({
     }
   }, [visible, listType]);
 
-  // Evaluate fixed status for all current transactions asynchronously
   useEffect(() => {
     let isMounted = true;
     const evaluateTransactions = async () => {
@@ -95,13 +98,19 @@ export function TransactionListModal({
   }, [db, transactions, profileId]);
 
   const monthLabel = monthNames[selectedMonth] || selectedMonth;
-
-  // Title configuration
   const isExpenseModal = listType === 'EXPENSE' || listType === 'FIXED' || listType === 'FLEXIBLE';
   const modalTitle = isExpenseModal ? 'Expenses' : 'Income Items';
 
-  // Filter list based on selected segment
   const displayedTransactions = transactions.filter((tx) => {
+    if (searchQuery.trim().length > 0) {
+      const query = searchQuery.toLowerCase().trim();
+      const merchant = (tx.merchant || '').toLowerCase();
+      const desc = (tx.rawDescription || '').toLowerCase();
+      const category = (tx.category || '').toLowerCase();
+      const matchesSearch = merchant.includes(query) || desc.includes(query) || category.includes(query);
+      if (!matchesSearch) return false;
+    }
+
     if (!isExpenseModal || filterMode === 'ALL') return true;
     const isFixed = !!fixedStateMap[tx.id];
     if (filterMode === 'FIXED') return isFixed;
@@ -115,7 +124,10 @@ export function TransactionListModal({
     <Modal visible={visible} transparent animationType="slide">
       <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={onClose}>
         <TouchableWithoutFeedback>
-          <View style={styles.sheetContainer}>
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            style={styles.sheetContainer}
+          >
             <View style={styles.sheetHandle} />
 
             {/* Header */}
@@ -131,7 +143,26 @@ export function TransactionListModal({
               </View>
             </View>
 
-            {/* 3-Option Segmented Filter (Only shown for Expense sheet) */}
+            {/* Search Input Bar */}
+            <View style={styles.searchBarContainer}>
+              <Ionicons name="search" size={16} color="#8E8E93" style={styles.searchIcon} />
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Search merchant, description..."
+                placeholderTextColor="#8E8E93"
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                clearButtonMode="while-editing"
+                autoCorrect={false}
+              />
+              {searchQuery.length > 0 && (
+                <TouchableOpacity onPress={() => setSearchQuery('')} style={styles.clearBtn}>
+                  <Ionicons name="close-circle" size={16} color="#8E8E93" />
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {/* 3-Option Segmented Filter */}
             {isExpenseModal && (
               <View style={styles.segmentedContainer}>
                 <TouchableOpacity
@@ -169,11 +200,17 @@ export function TransactionListModal({
             ) : displayedTransactions.length === 0 ? (
               <View style={styles.emptyContainer}>
                 <Text style={styles.emptyText}>
-                  No {filterMode !== 'ALL' ? filterMode.toLowerCase() : ''} transactions found for this period.
+                  {searchQuery.trim().length > 0
+                    ? `No matches found for "${searchQuery}"`
+                    : `No ${filterMode !== 'ALL' ? filterMode.toLowerCase() : ''} transactions found for this period.`}
                 </Text>
               </View>
             ) : (
-              <ScrollView style={styles.scrollList} showsVerticalScrollIndicator={false}>
+              <ScrollView
+                style={styles.scrollList}
+                showsVerticalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+              >
                 {displayedTransactions.map((trx) => {
                   const isFixed = !!fixedStateMap[trx.id];
                   return (
@@ -195,7 +232,6 @@ export function TransactionListModal({
                             <Text style={styles.trxMerchant} numberOfLines={1}>
                               {trx.merchant !== 'Unknown' ? trx.merchant : trx.rawDescription}
                             </Text>
-                            {/* Badges only render when filterMode is 'ALL' */}
                             {isExpenseModal && filterMode === 'ALL' && (
                               <View
                                 style={[
@@ -243,7 +279,7 @@ export function TransactionListModal({
             <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
               <Text style={styles.closeBtnText}>Close</Text>
             </TouchableOpacity>
-          </View>
+          </KeyboardAvoidingView>
         </TouchableWithoutFeedback>
       </TouchableOpacity>
     </Modal>
@@ -262,7 +298,7 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 24,
     padding: 20,
     paddingBottom: 34,
-    maxHeight: '80%',
+    maxHeight: '85%',
   },
   sheetHandle: {
     width: 36,
@@ -276,7 +312,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 14,
+    marginBottom: 12,
   },
   sheetTitle: {
     fontSize: 20,
@@ -300,12 +336,34 @@ const styles = StyleSheet.create({
     color: '#1C1C1E',
   },
 
+  searchBarContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F2F2F7',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginBottom: 12,
+  },
+  searchIcon: {
+    marginRight: 6,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 14,
+    color: '#1C1C1E',
+    padding: 0,
+  },
+  clearBtn: {
+    padding: 2,
+  },
+
   segmentedContainer: {
     flexDirection: 'row',
     backgroundColor: '#E5E5EA',
     borderRadius: 10,
     padding: 2,
-    marginBottom: 14,
+    marginBottom: 12,
   },
   segmentBtn: {
     flex: 1,
@@ -332,7 +390,7 @@ const styles = StyleSheet.create({
   },
 
   scrollList: {
-    maxHeight: 380,
+    maxHeight: 320,
   },
   trxRow: {
     flexDirection: 'row',

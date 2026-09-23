@@ -516,17 +516,17 @@ export default function DashboardScreen() {
             onOpenCardModal={handleOpenCardModal}
           />
 
+          {/* Fixed vs Flexible Board (Moved Above Spending Allocation) */}
+          <FixedFlexibleCard
+            summary={fixedSummary}
+            onPress={() => handleOpenCardModal('EXPENSE')}
+          />
+
           {/* Allocation Bar Chart */}
           <AllocationChart
             categoryData={categoryData}
             selectedBarCategory={selectedBarCategory}
             onBarPress={handleBarPress}
-          />
-
-          {/* Fixed vs Flexible Board */}
-          <FixedFlexibleCard
-            summary={fixedSummary}
-            onPress={() => handleOpenCardModal('EXPENSE')}
           />
 
           {/* Category Breakdown */}

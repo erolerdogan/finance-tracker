@@ -17,14 +17,9 @@ export function FixedFlexibleCard({ summary, onPress }: FixedFlexibleCardProps) 
     <TouchableOpacity style={styles.cardContainer} activeOpacity={0.8} onPress={onPress}>
       {/* Header */}
       <View style={styles.cardHeader}>
-        <View>
-          <Text style={styles.cardTitle}>Fixed vs. Flexible</Text>
-          <Text style={styles.cardSubtitle}>
-            {displayFixedPct}% of total spending is locked in
-          </Text>
-        </View>
+        <Text style={styles.cardTitle}>Fixed vs. Flexible</Text>
         <View style={styles.badge}>
-          <Text style={styles.badgeText}>{fixedItemsCount} Fixed</Text>
+          <Text style={styles.badgeText}>{fixedItemsCount} Fixed Items</Text>
         </View>
       </View>
 
@@ -34,28 +29,30 @@ export function FixedFlexibleCard({ summary, onPress }: FixedFlexibleCardProps) 
         <View style={[styles.flexibleBar, { width: `${displayFlexiblePct}%` }]} />
       </View>
 
-      {/* Metrics Row */}
+      {/* Simplified Metrics Row */}
       <View style={styles.statsRow}>
-        {/* Fixed Column */}
+        {/* Fixed Overhead */}
         <View style={styles.statCol}>
           <View style={styles.indicatorRow}>
             <View style={[styles.dot, { backgroundColor: '#5856D6' }]} />
-            <Text style={styles.statLabel}>Fixed Overhead</Text>
+            <Text style={styles.statLabel}>Fixed</Text>
           </View>
-          <Text style={styles.statAmount}>€{fixedTotal.toFixed(0)}</Text>
-          <Text style={styles.statPercent}>{displayFixedPct}% of expenses</Text>
+          <Text style={styles.statAmount}>
+            €{fixedTotal.toFixed(0)} <Text style={styles.statPercent}>({displayFixedPct}%)</Text>
+          </Text>
         </View>
 
         <View style={styles.divider} />
 
-        {/* Flexible Column */}
+        {/* Flexible Spending */}
         <View style={styles.statCol}>
           <View style={styles.indicatorRow}>
             <View style={[styles.dot, { backgroundColor: '#FF9500' }]} />
-            <Text style={styles.statLabel}>Flexible Spending</Text>
+            <Text style={styles.statLabel}>Flexible</Text>
           </View>
-          <Text style={styles.statAmount}>€{flexibleTotal.toFixed(0)}</Text>
-          <Text style={styles.statPercent}>{displayFlexiblePct}% of expenses</Text>
+          <Text style={styles.statAmount}>
+            €{flexibleTotal.toFixed(0)} <Text style={styles.statPercent}>({displayFlexiblePct}%)</Text>
+          </Text>
         </View>
       </View>
     </TouchableOpacity>
@@ -78,17 +75,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 14,
+    marginBottom: 12,
   },
   cardTitle: {
     fontSize: 16,
     fontWeight: '700',
     color: '#1C1C1E',
-  },
-  cardSubtitle: {
-    fontSize: 12,
-    color: '#8E8E93',
-    marginTop: 2,
   },
   badge: {
     backgroundColor: '#5856D615',
@@ -102,12 +94,12 @@ const styles = StyleSheet.create({
     color: '#5856D6',
   },
   barContainer: {
-    height: 10,
-    borderRadius: 5,
+    height: 8,
+    borderRadius: 4,
     backgroundColor: '#E5E5EA',
     flexDirection: 'row',
     overflow: 'hidden',
-    marginBottom: 16,
+    marginBottom: 14,
   },
   fixedBar: {
     backgroundColor: '#5856D6',
@@ -127,14 +119,14 @@ const styles = StyleSheet.create({
   },
   divider: {
     width: StyleSheet.hairlineWidth,
-    height: 36,
+    height: 28,
     backgroundColor: '#E5E5EA',
     marginHorizontal: 12,
   },
   indicatorRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 4,
+    marginBottom: 2,
   },
   dot: {
     width: 6,
@@ -148,13 +140,13 @@ const styles = StyleSheet.create({
     color: '#8E8E93',
   },
   statAmount: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '700',
     color: '#1C1C1E',
   },
   statPercent: {
-    fontSize: 11,
+    fontSize: 12,
+    fontWeight: '500',
     color: '#8E8E93',
-    marginTop: 2,
   },
 });
