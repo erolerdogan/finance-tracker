@@ -164,7 +164,7 @@ export async function initDatabase(db: SQLiteDatabase): Promise<void> {
       UNIQUE(keyword, profileId)
     );
   `);
-  
+   
   try {
     await db.execAsync(`ALTER TABLE transactions ADD COLUMN profileId INTEGER NOT NULL DEFAULT 1;`);
   } catch (e) {}
@@ -694,7 +694,21 @@ export async function clearAllData(
   db: SQLiteDatabase,
   profileId: number = 1
 ): Promise<void> {
-  await db.execAsync(`DELETE FROM transactions WHERE profileId = ${profileId};`);
+  if (!db) return;
+
+  await db.withTransactionAsync(async () => {
+    // 1. Delete transactions for this profile
+    await db.runAsync(`DELETE FROM transactions WHERE profileId = ?;`, [profileId]);
+
+    // 2. Clear category budget goals for this profile
+    await db.runAsync(`DELETE FROM category_goals WHERE profileId = ?;`, [profileId]);
+
+    // 3. Clear custom categorization rules for this profile
+    await db.runAsync(`DELETE FROM category_rules WHERE profileId = ?;`, [profileId]);
+
+    // 4. Clear fixed/flexible cost override rules for this profile
+    await db.runAsync(`DELETE FROM fixed_cost_rules WHERE profileId = ?;`, [profileId]);
+  });
 }
 
 export async function detectRecurringPatterns(

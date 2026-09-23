@@ -1,7 +1,7 @@
 import { ProfileSwitcherModal } from '@/components/ProfileSwitcherModal';
 import { useProfile } from '@/contexts/ProfileContext';
 import { useTheme } from '@/contexts/ThemeContext';
-import { clearAllTransactions } from '@/db/database';
+import { clearAllData } from '@/db/database';
 import { processBatchImport } from '@/services/importService';
 import {
     cancelCurrentMonthReminders,
@@ -102,8 +102,8 @@ export default function SettingsScreen() {
 
   const handleResetDatabase = () => {
     Alert.alert(
-      'Reset Profile Transactions',
-      `Are you sure you want to delete all imported transactions for ${activeProfile?.name || 'this profile'}? This cannot be undone.`,
+      'Reset Profile Database',
+      `Are you sure you want to delete all transactions, category goals, and custom rules for ${activeProfile?.name || 'this profile'}? This cannot be undone.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -112,8 +112,8 @@ export default function SettingsScreen() {
           onPress: async () => {
             try {
               setLoading(true);
-              await clearAllTransactions(db, activeProfileId);
-              Alert.alert('Database Cleared', 'All transactions for this profile have been removed.');
+              await clearAllData(db, activeProfileId);
+              Alert.alert('Database Cleared', 'All data and budget goals for this profile have been completely reset.');
             } catch (error) {
               console.error('Reset error:', error);
               Alert.alert('Error', 'Failed to clear database.');

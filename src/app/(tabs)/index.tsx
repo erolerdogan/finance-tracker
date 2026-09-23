@@ -2,6 +2,7 @@ import { AllocationChart } from '@/components/dashboard/AllocationChart';
 import { FixedFlexibleCard } from '@/components/dashboard/FixedFlexibleCard';
 import { MonthStepper } from '@/components/dashboard/MonthStepper';
 import { SummaryCards } from '@/components/dashboard/SummaryCards';
+import { WelcomeHero } from '@/components/dashboard/WelcomeHero';
 import { TransactionDetailModal } from '@/components/modals/TransactionDetailModal';
 import { TransactionListModal } from '@/components/modals/TransactionListModal';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -21,6 +22,7 @@ import {
   setMerchantFixedOverride,
   Transaction
 } from '@/db/database';
+import { generateSampleData } from '@/utils/sampleData';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
@@ -76,6 +78,7 @@ export default function DashboardScreen() {
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadingDemo, setLoadingDemo] = useState(false);
 
   // Modals & Selection State
   const [monthPickerVisible, setMonthPickerVisible] = useState(false);
@@ -123,17 +126,25 @@ export default function DashboardScreen() {
       setLoading(true);
 
       const dbMonths = await getAvailableMonths(db, activeProfileId);
+      setAvailableMonths(dbMonths);
 
-      let monthsList = dbMonths.length > 0 ? [...dbMonths] : [currentMonthKey];
-      if (!monthsList.includes(currentMonthKey)) {
-        monthsList = [currentMonthKey, ...monthsList];
+      if (dbMonths.length === 0) {
+        setCoverageStatus({ status: 'EMPTY', label: 'Statement Pending' });
+        setSummary({ totalIncome: 0, totalExpenses: 0, netSavings: 0 });
+        setCategoryData([]);
+        setFixedSummary({
+          fixedTotal: 0,
+          flexibleTotal: 0,
+          fixedPercentage: 0,
+          flexiblePercentage: 0,
+          fixedItemsCount: 0,
+        });
+        return;
       }
 
-      setAvailableMonths(monthsList);
-
-      const activeMonth = selectedMonth && monthsList.includes(selectedMonth)
+      const activeMonth = selectedMonth && dbMonths.includes(selectedMonth)
         ? selectedMonth
-        : monthsList[0];
+        : dbMonths[0];
 
       if (activeMonth !== selectedMonth) {
         setSelectedMonth(activeMonth);
@@ -228,20 +239,14 @@ export default function DashboardScreen() {
   };
 
   const handleSelectFromFlatList = (trx: Transaction) => {
-    // Dismiss list sheet first so iOS can mount the detail sheet cleanly
     setListModalVisible(false);
-    
-    // Brief delay to allow native dismiss animation before opening details
     setTimeout(() => {
       handleSelectTransaction(trx);
     }, 250);
   };
-  
+
   const handleCloseDetail = () => {
-    // Clear selected transaction
     setSelectedTransaction(null);
-  
-    // If we came from a list modal type, reopen the list modal cleanly
     if (listModalType) {
       setTimeout(() => {
         setListModalVisible(true);
@@ -326,6 +331,19 @@ export default function DashboardScreen() {
     }
   };
 
+  const handleLoadDemo = async () => {
+    if (!db) return;
+    try {
+      setLoadingDemo(true);
+      await generateSampleData(db, activeProfileId);
+      await loadDashboardData();
+    } catch (err) {
+      console.error('Failed to load sample data:', err);
+    } finally {
+      setLoadingDemo(false);
+    }
+  };
+
   const totalTransactions = categoryData.reduce((a, b) => a + (b.count || 0), 0);
 
   return (
@@ -346,7 +364,6 @@ export default function DashboardScreen() {
           <View style={styles.headerRow}>
             <Text style={[styles.headerTitle, { color: colors.text }]}>Overview</Text>
 
-            {/* Settings Icon Launcher */}
             <TouchableOpacity
               style={[
                 styles.settingsHeaderBtn,
@@ -359,40 +376,51 @@ export default function DashboardScreen() {
             </TouchableOpacity>
           </View>
 
-          {/* Month Stepper Navigation */}
-          <MonthStepper
-            selectedMonth={selectedMonth}
-            availableMonths={availableMonths}
-            monthNames={MONTH_NAMES}
-            coverageStatus={coverageStatus}
-            onPrevMonth={handlePrevMonth}
-            onNextMonth={handleNextMonth}
-            onOpenMonthPicker={() => setMonthPickerVisible(true)}
-          />
+          {/* Conditional Empty State Landing View */}
+          {availableMonths.length === 0 ? (
+            <WelcomeHero
+              onImportPress={() => router.push('/settings')}
+              onLoadDemoPress={handleLoadDemo}
+              loadingDemo={loadingDemo}
+            />
+          ) : (
+            <>
+              {/* Month Stepper Navigation */}
+              <MonthStepper
+                selectedMonth={selectedMonth}
+                availableMonths={availableMonths}
+                monthNames={MONTH_NAMES}
+                coverageStatus={coverageStatus}
+                onPrevMonth={handlePrevMonth}
+                onNextMonth={handleNextMonth}
+                onOpenMonthPicker={() => setMonthPickerVisible(true)}
+              />
 
-          {/* Hero Summary Cards */}
-          <SummaryCards
-            summary={summary}
-            totalTransactions={totalTransactions}
-            categoryCount={categoryData.length}
-            onOpenCardModal={handleOpenCardModal}
-          />
+              {/* Hero Summary Cards */}
+              <SummaryCards
+                summary={summary}
+                totalTransactions={totalTransactions}
+                categoryCount={categoryData.length}
+                onOpenCardModal={handleOpenCardModal}
+              />
 
-          {/* Spending Allocation Donut Chart with Inline Item Breakdown */}
-          <AllocationChart
-            categoryData={categoryData}
-            selectedBarCategory={selectedBarCategory}
-            selectedCategoryTransactions={selectedCategoryTransactions}
-            loadingTransactions={loadingTransactions}
-            onBarPress={handleBarPress}
-            onSelectTransaction={handleSelectTransaction}
-          />
+              {/* Spending Allocation Donut Chart */}
+              <AllocationChart
+                categoryData={categoryData}
+                selectedBarCategory={selectedBarCategory}
+                selectedCategoryTransactions={selectedCategoryTransactions}
+                loadingTransactions={loadingTransactions}
+                onBarPress={handleBarPress}
+                onSelectTransaction={handleSelectTransaction}
+              />
 
-          {/* Fixed vs Flexible Board */}
-          <FixedFlexibleCard
-            summary={fixedSummary}
-            onPress={() => handleOpenCardModal('EXPENSE')}
-          />
+              {/* Fixed vs Flexible Board */}
+              <FixedFlexibleCard
+                summary={fixedSummary}
+                onPress={() => handleOpenCardModal('EXPENSE')}
+              />
+            </>
+          )}
         </ScrollView>
 
         <TransactionListModal
