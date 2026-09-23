@@ -1,18 +1,20 @@
 import { getCategoryColor } from '@/constants/colors';
-import { Transaction } from '@/db/database';
+import { isTransactionFixed, Transaction } from '@/db/database';
 import { Ionicons } from '@expo/vector-icons';
-import React, { useState } from 'react';
+import { useSQLiteContext } from 'expo-sqlite';
+import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Modal,
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   TouchableWithoutFeedback,
   View
 } from 'react-native';
+
+export type ExpenseFilterMode = 'ALL' | 'FIXED' | 'FLEXIBLE';
 
 interface TransactionListModalProps {
   visible: boolean;
@@ -23,6 +25,7 @@ interface TransactionListModalProps {
   loading: boolean;
   onClose: () => void;
   onSelectTransaction: (trx: Transaction) => void;
+  profileId?: number;
 }
 
 export function TransactionListModal({
@@ -34,122 +37,211 @@ export function TransactionListModal({
   loading,
   onClose,
   onSelectTransaction,
+  profileId = 1,
 }: TransactionListModalProps) {
-  const [searchQuery, setSearchQuery] = useState('');
+  const db = useSQLiteContext();
+  const [filterMode, setFilterMode] = useState<ExpenseFilterMode>('ALL');
+  const [fixedStateMap, setFixedStateMap] = useState<Record<number, boolean>>({});
+  const [evaluatingFixed, setEvaluatingFixed] = useState(false);
 
-  const filteredTransactions = transactions.filter((trx) => {
-    if (!searchQuery.trim()) return true;
-    const term = searchQuery.toLowerCase().trim();
-    return (
-      (trx.merchant && trx.merchant.toLowerCase().includes(term)) ||
-      (trx.rawDescription &&
-        trx.rawDescription.toLowerCase().includes(term)) ||
-      (trx.category && trx.category.toLowerCase().includes(term))
-    );
+  // Reset filter when opening/changing modal type
+  useEffect(() => {
+    if (visible) {
+      if (listType === 'FIXED') {
+        setFilterMode('FIXED');
+      } else if (listType === 'FLEXIBLE') {
+        setFilterMode('FLEXIBLE');
+      } else {
+        setFilterMode('ALL');
+      }
+    }
+  }, [visible, listType]);
+
+  // Evaluate fixed status for all current transactions asynchronously
+  useEffect(() => {
+    let isMounted = true;
+    const evaluateTransactions = async () => {
+      if (!db || transactions.length === 0) {
+        setFixedStateMap({});
+        return;
+      }
+
+      setEvaluatingFixed(true);
+      const resultMap: Record<number, boolean> = {};
+
+      for (const tx of transactions) {
+        if (tx.is_fixed === 1) {
+          resultMap[tx.id] = true;
+        } else if (tx.is_fixed === 0) {
+          resultMap[tx.id] = false;
+        } else {
+          const keyword = tx.merchant !== 'Unknown' ? tx.merchant : tx.rawDescription;
+          const isAutoFixed = await isTransactionFixed(db, keyword, profileId);
+          resultMap[tx.id] = isAutoFixed;
+        }
+      }
+
+      if (isMounted) {
+        setFixedStateMap(resultMap);
+        setEvaluatingFixed(false);
+      }
+    };
+
+    evaluateTransactions();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [db, transactions, profileId]);
+
+  const monthLabel = monthNames[selectedMonth] || selectedMonth;
+
+  // Title configuration
+  const isExpenseModal = listType === 'EXPENSE' || listType === 'FIXED' || listType === 'FLEXIBLE';
+  const modalTitle = isExpenseModal ? 'Expenses' : 'Income Items';
+
+  // Filter list based on selected segment
+  const displayedTransactions = transactions.filter((tx) => {
+    if (!isExpenseModal || filterMode === 'ALL') return true;
+    const isFixed = !!fixedStateMap[tx.id];
+    if (filterMode === 'FIXED') return isFixed;
+    if (filterMode === 'FLEXIBLE') return !isFixed;
+    return true;
   });
+
+  const totalAmount = displayedTransactions.reduce((acc, tx) => acc + Math.abs(tx.amount), 0);
 
   return (
     <Modal visible={visible} transparent animationType="slide">
-      <TouchableOpacity
-        style={styles.modalOverlay}
-        activeOpacity={1}
-        onPress={onClose}
-      >
+      <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={onClose}>
         <TouchableWithoutFeedback>
-          <View style={styles.flatListModalContainer}>
+          <View style={styles.sheetContainer}>
             <View style={styles.sheetHandle} />
 
-            <View style={styles.flatListHeader}>
-              <Text style={styles.flatListTitle}>
-                {listType === 'INCOME' && 'All Income (High to Low)'}
-                {listType === 'EXPENSE' && 'All Expenses (High to Low)'}
-                {listType === 'FIXED' && 'Fixed Commitments'}
-                {listType === 'FLEXIBLE' && 'Flexible Spending'}
-              </Text>
-              <Text style={styles.flatListSubTitle}>
-                {monthNames[selectedMonth] || selectedMonth} •{' '}
-                {filteredTransactions.length} items
-              </Text>
+            {/* Header */}
+            <View style={styles.headerRow}>
+              <View>
+                <Text style={styles.sheetTitle}>{modalTitle}</Text>
+                <Text style={styles.sheetSubtitle}>{monthLabel}</Text>
+              </View>
+              <View style={styles.totalBadge}>
+                <Text style={styles.totalBadgeText}>
+                  €{totalAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </Text>
+              </View>
             </View>
 
-            {/* In-Modal Search Input Bar */}
-            <View style={styles.modalSearchBox}>
-              <Ionicons
-                name="search-outline"
-                size={16}
-                color="#8E8E93"
-                style={{ marginRight: 8 }}
-              />
-              <TextInput
-                style={styles.modalSearchInput}
-                placeholder="Search merchant or description..."
-                placeholderTextColor="#8E8E93"
-                value={searchQuery}
-                onChangeText={setSearchQuery}
-                clearButtonMode="while-editing"
-              />
-            </View>
+            {/* 3-Option Segmented Filter (Only shown for Expense sheet) */}
+            {isExpenseModal && (
+              <View style={styles.segmentedContainer}>
+                <TouchableOpacity
+                  style={[styles.segmentBtn, filterMode === 'ALL' && styles.segmentBtnActive]}
+                  onPress={() => setFilterMode('ALL')}
+                >
+                  <Text style={[styles.segmentText, filterMode === 'ALL' && styles.segmentTextActive]}>
+                    All
+                  </Text>
+                </TouchableOpacity>
 
-            {loading ? (
-              <ActivityIndicator
-                size="small"
-                color="#007AFF"
-                style={{ marginVertical: 32 }}
-              />
-            ) : filteredTransactions.length === 0 ? (
-              <View style={styles.emptyCard}>
-                <Text style={styles.emptyText}>No matching records found.</Text>
+                <TouchableOpacity
+                  style={[styles.segmentBtn, filterMode === 'FIXED' && styles.segmentBtnActive]}
+                  onPress={() => setFilterMode('FIXED')}
+                >
+                  <Text style={[styles.segmentText, filterMode === 'FIXED' && styles.segmentTextActive]}>
+                    Fixed
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.segmentBtn, filterMode === 'FLEXIBLE' && styles.segmentBtnActive]}
+                  onPress={() => setFilterMode('FLEXIBLE')}
+                >
+                  <Text style={[styles.segmentText, filterMode === 'FLEXIBLE' && styles.segmentTextActive]}>
+                    Flexible
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {/* List Body */}
+            {loading || evaluatingFixed ? (
+              <ActivityIndicator size="small" color="#007AFF" style={{ marginVertical: 32 }} />
+            ) : displayedTransactions.length === 0 ? (
+              <View style={styles.emptyContainer}>
+                <Text style={styles.emptyText}>
+                  No {filterMode !== 'ALL' ? filterMode.toLowerCase() : ''} transactions found for this period.
+                </Text>
               </View>
             ) : (
-              <ScrollView style={{ maxHeight: 400 }}>
-                {filteredTransactions.map((trx) => (
-                  <TouchableOpacity
-                    key={trx.id}
-                    style={styles.flatTrxRow}
-                    activeOpacity={0.7}
-                    onPress={() => {
-                      setSearchQuery('');
-                      onSelectTransaction(trx);
-                    }}
-                  >
-                    <View style={styles.flatTrxLeft}>
-                      <View
-                        style={[
-                          styles.categoryBadgeDot,
-                          { backgroundColor: getCategoryColor(trx.category) },
-                        ]}
-                      />
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.flatTrxMerchant} numberOfLines={1}>
-                          {trx.merchant !== 'Unknown'
-                            ? trx.merchant
-                            : trx.rawDescription}
-                        </Text>
-                        <Text style={styles.flatTrxMeta}>
-                          {trx.date} • {trx.category}
-                        </Text>
-                      </View>
-                    </View>
-                    <Text
-                      style={[
-                        styles.flatTrxAmount,
-                        { color: trx.amount < 0 ? '#1C1C1E' : '#34C759' },
-                      ]}
+              <ScrollView style={styles.scrollList} showsVerticalScrollIndicator={false}>
+                {displayedTransactions.map((trx) => {
+                  const isFixed = !!fixedStateMap[trx.id];
+                  return (
+                    <TouchableOpacity
+                      key={trx.id}
+                      style={styles.trxRow}
+                      activeOpacity={0.7}
+                      onPress={() => onSelectTransaction(trx)}
                     >
-                      {trx.amount < 0
-                        ? `-€${Math.abs(trx.amount).toFixed(2)}`
-                        : `+€${trx.amount.toFixed(2)}`}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
+                      <View style={styles.trxLeft}>
+                        <View
+                          style={[
+                            styles.categoryDot,
+                            { backgroundColor: getCategoryColor(trx.category) },
+                          ]}
+                        />
+                        <View style={{ flex: 1 }}>
+                          <View style={styles.merchantRow}>
+                            <Text style={styles.trxMerchant} numberOfLines={1}>
+                              {trx.merchant !== 'Unknown' ? trx.merchant : trx.rawDescription}
+                            </Text>
+                            {/* Badges only render when filterMode is 'ALL' */}
+                            {isExpenseModal && filterMode === 'ALL' && (
+                              <View
+                                style={[
+                                  styles.fixedBadge,
+                                  isFixed ? styles.fixedBadgeActive : styles.flexibleBadgeActive,
+                                ]}
+                              >
+                                <Text
+                                  style={[
+                                    styles.fixedBadgeText,
+                                    isFixed ? styles.fixedBadgeTextActive : styles.flexibleBadgeTextActive,
+                                  ]}
+                                >
+                                  {isFixed ? 'FIXED' : 'FLEX'}
+                                </Text>
+                              </View>
+                            )}
+                          </View>
+                          <Text style={styles.trxMeta}>
+                            {trx.date} • {trx.category}
+                          </Text>
+                        </View>
+                      </View>
+
+                      <View style={styles.trxRight}>
+                        <Text
+                          style={[
+                            styles.trxAmount,
+                            { color: trx.amount < 0 ? '#1C1C1E' : '#34C759' },
+                          ]}
+                        >
+                          {trx.amount < 0
+                            ? `-€${Math.abs(trx.amount).toFixed(2)}`
+                            : `+€${trx.amount.toFixed(2)}`}
+                        </Text>
+                        <Ionicons name="chevron-forward" size={14} color="#C7C7CC" />
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
               </ScrollView>
             )}
 
-            <TouchableOpacity
-              style={styles.closeDetailButton}
-              onPress={onClose}
-            >
-              <Text style={styles.closeDetailButtonText}>Close</Text>
+            {/* Close Button */}
+            <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
+              <Text style={styles.closeBtnText}>Close</Text>
             </TouchableOpacity>
           </View>
         </TouchableWithoutFeedback>
@@ -164,65 +256,171 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.4)',
     justifyContent: 'flex-end',
   },
-  flatListModalContainer: {
+  sheetContainer: {
     backgroundColor: '#FFF',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     padding: 20,
     paddingBottom: 34,
+    maxHeight: '80%',
   },
   sheetHandle: {
     width: 36,
     height: 4,
     borderRadius: 2,
     backgroundColor: '#D1D1D6',
-    marginBottom: 12,
+    marginBottom: 14,
     alignSelf: 'center',
   },
-  flatListHeader: { alignItems: 'center', marginBottom: 12 },
-  flatListTitle: { fontSize: 18, fontWeight: '700', color: '#1C1C1E' },
-  flatListSubTitle: { fontSize: 12, color: '#8E8E93', marginTop: 2 },
-  modalSearchBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F2F2F7',
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    marginBottom: 12,
-  },
-  modalSearchInput: { flex: 1, fontSize: 14, color: '#1C1C1E' },
-  emptyCard: {
-    backgroundColor: '#FFF',
-    borderRadius: 16,
-    padding: 24,
-    alignItems: 'center',
-  },
-  emptyText: { fontSize: 13, color: '#8E8E93' },
-  flatTrxRow: {
+  headerRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 12,
+    marginBottom: 14,
+  },
+  sheetTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#1C1C1E',
+  },
+  sheetSubtitle: {
+    fontSize: 12,
+    color: '#8E8E93',
+    marginTop: 2,
+  },
+  totalBadge: {
+    backgroundColor: '#F2F2F7',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
+  },
+  totalBadgeText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1C1C1E',
+  },
+
+  segmentedContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#E5E5EA',
+    borderRadius: 10,
+    padding: 2,
+    marginBottom: 14,
+  },
+  segmentBtn: {
+    flex: 1,
+    paddingVertical: 7,
+    alignItems: 'center',
+    borderRadius: 8,
+  },
+  segmentBtnActive: {
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.12,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  segmentText: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#8E8E93',
+  },
+  segmentTextActive: {
+    color: '#007AFF',
+    fontWeight: '700',
+  },
+
+  scrollList: {
+    maxHeight: 380,
+  },
+  trxRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 10,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: '#E5E5EA',
   },
-  flatTrxLeft: {
+  trxLeft: {
     flexDirection: 'row',
     alignItems: 'center',
     flex: 1,
-    marginRight: 8,
+    marginRight: 10,
   },
-  categoryBadgeDot: { width: 8, height: 8, borderRadius: 4, marginRight: 10 },
-  flatTrxMerchant: { fontSize: 14, fontWeight: '600', color: '#1C1C1E' },
-  flatTrxMeta: { fontSize: 11, color: '#8E8E93', marginTop: 2 },
-  flatTrxAmount: { fontSize: 14, fontWeight: '700' },
-  closeDetailButton: {
+  categoryDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 10,
+  },
+  merchantRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  trxMerchant: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#1C1C1E',
+    flexShrink: 1,
+  },
+  fixedBadge: {
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  fixedBadgeActive: {
+    backgroundColor: '#5856D615',
+  },
+  flexibleBadgeActive: {
+    backgroundColor: '#FF950015',
+  },
+  fixedBadgeText: {
+    fontSize: 9,
+    fontWeight: '700',
+  },
+  fixedBadgeTextActive: {
+    color: '#5856D6',
+  },
+  flexibleBadgeTextActive: {
+    color: '#FF9500',
+  },
+  trxMeta: {
+    fontSize: 11,
+    color: '#8E8E93',
+    marginTop: 2,
+  },
+  trxRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  trxAmount: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+
+  emptyContainer: {
+    paddingVertical: 32,
+    alignItems: 'center',
+  },
+  emptyText: {
+    fontSize: 13,
+    color: '#8E8E93',
+    fontStyle: 'italic',
+  },
+
+  closeBtn: {
     backgroundColor: '#F2F2F7',
     borderRadius: 12,
     paddingVertical: 12,
     alignItems: 'center',
-    marginTop: 12,
+    marginTop: 14,
   },
-  closeDetailButtonText: { fontSize: 15, fontWeight: '700', color: '#007AFF' },
+  closeBtnText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#007AFF',
+  },
 });
