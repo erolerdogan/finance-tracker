@@ -127,7 +127,6 @@ export default function AnalyticsScreen() {
           value: val,
           label: item.monthName.split('-')[1],
           monthKey: item.monthName,
-          // If no data exists for this month, hide the dot and make the point non-interactive/invisible!
           hideDataPoint: !hasData,
           dataPointColor: hasData ? ptColor : 'transparent',
           customDataPoint: hasData
@@ -148,12 +147,17 @@ export default function AnalyticsScreen() {
       });
 
       const total = values.reduce((a, b) => a + b, 0);
-      const avg = total / (values.length || 1);
-      const maxVal = Math.max(...values);
-      const minVal = Math.min(...values.filter((v) => v > 0));
+      
+      // Compute average using active months only
+      const activeValues = values.filter((v) => v > 0);
+      const activeMonthsCount = activeValues.length;
+      const avg = activeMonthsCount > 0 ? total / activeMonthsCount : 0;
 
-      const highest = trendWithBudget.find((m) => m.totalAmount === maxVal)?.monthName || '-';
-      const lowest = trendWithBudget.find((m) => m.totalAmount === minVal)?.monthName || '-';
+      const maxVal = Math.max(...values);
+      const minVal = Math.min(...(activeValues.length > 0 ? activeValues : [0]));
+
+      const highest = trendWithBudget.find((m) => m.totalAmount === maxVal && m.totalAmount > 0)?.monthName || '-';
+      const lowest = trendWithBudget.find((m) => m.totalAmount === minVal && m.totalAmount > 0)?.monthName || '-';
 
       setChartData(formattedChartData);
       setSummary({
@@ -218,10 +222,26 @@ export default function AnalyticsScreen() {
   };
 
   const handleSelectTransactionFromModal = async (trx: Transaction) => {
-    setSelectedTransaction(trx);
-    if (db) {
-      const fixedState = await getTransactionFixedState(db, trx, activeProfileId);
-      setCurrentFixedState(fixedState);
+    // Dismiss list modal cleanly first to avoid iOS multi-modal presentation conflicts
+    setListModalVisible(false);
+
+    setTimeout(async () => {
+      setSelectedTransaction(trx);
+      if (db) {
+        const fixedState = await getTransactionFixedState(db, trx, activeProfileId);
+        setCurrentFixedState(fixedState);
+      }
+    }, 250);
+  };
+
+  const handleCloseDetailModal = () => {
+    setSelectedTransaction(null);
+
+    // Re-open underlying list sheet smoothly
+    if (selectedMonthForModal) {
+      setTimeout(() => {
+        setListModalVisible(true);
+      }, 250);
     }
   };
 
@@ -271,7 +291,7 @@ export default function AnalyticsScreen() {
             />
           }
         >
-          {/* Top Header Bar with Settings Icon */}
+          {/* Top Header Bar */}
           <View style={styles.headerRow}>
             <Text style={[styles.headerTitle, { color: colors.text }]}>Analytics</Text>
             <TouchableOpacity
@@ -390,7 +410,7 @@ export default function AnalyticsScreen() {
             )}
           </View>
 
-          {/* 1. Interactive Line Graph Card */}
+          {/* Interactive Line Graph Card */}
           <View style={[styles.chartCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
             <View style={styles.chartHeaderRow}>
               <Text style={[styles.chartTitle, { color: colors.text }]}>Spending Velocity</Text>
@@ -492,7 +512,7 @@ export default function AnalyticsScreen() {
             )}
           </View>
 
-          {/* 2. Metric Summary Grid */}
+          {/* Metric Summary Grid */}
           <View style={styles.grid}>
             <View style={[styles.metricCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
               <Text style={[styles.metricLabel, { color: colors.textSecondary }]}>Total Year Spending</Text>
@@ -537,7 +557,8 @@ export default function AnalyticsScreen() {
           visible={selectedTransaction !== null}
           transaction={selectedTransaction}
           fixedState={currentFixedState}
-          onClose={() => setSelectedTransaction(null)}
+          parentTitle={selectedCategory === 'All' ? 'Expenses' : selectedCategory}
+          onClose={handleCloseDetailModal}
           onSelectFixedState={handleSelectFixedStateInDetail}
         />
       </View>

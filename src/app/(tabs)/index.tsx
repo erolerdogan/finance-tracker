@@ -228,10 +228,25 @@ export default function DashboardScreen() {
   };
 
   const handleSelectFromFlatList = (trx: Transaction) => {
+    // Dismiss list sheet first so iOS can mount the detail sheet cleanly
     setListModalVisible(false);
+    
+    // Brief delay to allow native dismiss animation before opening details
     setTimeout(() => {
       handleSelectTransaction(trx);
-    }, 200);
+    }, 250);
+  };
+  
+  const handleCloseDetail = () => {
+    // Clear selected transaction
+    setSelectedTransaction(null);
+  
+    // If we came from a list modal type, reopen the list modal cleanly
+    if (listModalType) {
+      setTimeout(() => {
+        setListModalVisible(true);
+      }, 250);
+    }
   };
 
   const handleSelectFixedState = async (newState: FixedOverrideState) => {
@@ -395,7 +410,16 @@ export default function DashboardScreen() {
           visible={selectedTransaction !== null}
           transaction={selectedTransaction}
           fixedState={currentFixedState}
-          onClose={() => setSelectedTransaction(null)}
+          parentTitle={
+            listModalType === 'INCOME'
+              ? 'Income Items'
+              : listModalType === 'FIXED'
+              ? 'Fixed Transactions'
+              : listModalType === 'FLEXIBLE'
+              ? 'Flexible Transactions'
+              : 'Expenses'
+          }
+          onClose={handleCloseDetail}
           onSelectFixedState={handleSelectFixedState}
         />
 
