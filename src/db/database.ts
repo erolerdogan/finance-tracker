@@ -791,19 +791,29 @@ export async function getTransactionFixedState(
 ): Promise<FixedOverrideState> {
   if (!db || !transaction) return 'AUTO';
 
-  const uppercaseKeyword = (
-    transaction.merchant !== 'Unknown' ? transaction.merchant : transaction.rawDescription
-  ).toUpperCase().trim();
+  // 1. Direct explicit user override on transaction row
+  if (transaction.is_fixed === 1) return 'FIXED';
+  if (transaction.is_fixed === 0) return 'FLEXIBLE';
 
-  const customRule = await db.getFirstAsync<{ overrideState: FixedOverrideState }>(
-    `SELECT overrideState FROM fixed_cost_rules WHERE UPPER(keyword) = ? AND profileId = ?;`,
-    [uppercaseKeyword, profileId]
-  );
+  // 2. Explicit rule table override
+  const keyword =
+    transaction.merchant && transaction.merchant !== 'Unknown'
+      ? transaction.merchant
+      : transaction.rawDescription;
 
-  if (customRule) {
-    return customRule.overrideState;
+  if (keyword) {
+    const uppercaseKeyword = keyword.toUpperCase().trim();
+    const rule = await db.getFirstAsync<{ overrideState: FixedOverrideState }>(
+      `SELECT overrideState FROM fixed_cost_rules WHERE UPPER(keyword) = ? AND profileId = ?;`,
+      [uppercaseKeyword, profileId]
+    );
+
+    if (rule?.overrideState) {
+      return rule.overrideState;
+    }
   }
 
+  // 3. Default state for all fresh imports
   return 'AUTO';
 }
 
@@ -815,15 +825,18 @@ export async function setMerchantFixedOverride(
   profileId: number = 1
 ): Promise<void> {
   if (!db || !merchantOrDesc) return;
+
   const uppercaseKeyword = merchantOrDesc.toUpperCase().trim();
   const searchPattern = `%${uppercaseKeyword}%`;
 
   if (overrideState === 'AUTO') {
+    // 1. Delete manual override rule
     await db.runAsync(
       `DELETE FROM fixed_cost_rules WHERE UPPER(keyword) = ? AND profileId = ?;`,
       [uppercaseKeyword, profileId]
     );
 
+    // 2. Clear explicit override column on transactions back to NULL (AUTO)
     await db.runAsync(
       `UPDATE transactions 
        SET is_fixed = NULL 
@@ -831,15 +844,20 @@ export async function setMerchantFixedOverride(
       [searchPattern, searchPattern, profileId]
     );
   } else {
+    // 1 for FIXED, 0 for FLEXIBLE
     const isFixedVal = overrideState === 'FIXED' ? 1 : 0;
 
+    // 1. Upsert rule table
     await db.runAsync(
       `INSERT INTO fixed_cost_rules (keyword, category, overrideState, profileId) 
        VALUES (?, ?, ?, ?)
-       ON CONFLICT(keyword, profileId) DO UPDATE SET overrideState = excluded.overrideState;`,
+       ON CONFLICT(keyword, profileId) DO UPDATE SET 
+         overrideState = excluded.overrideState,
+         category = excluded.category;`,
       [uppercaseKeyword, category, overrideState, profileId]
     );
 
+    // 2. Force write explicit 1 or 0 across all matching transactions
     await db.runAsync(
       `UPDATE transactions 
        SET is_fixed = ? 

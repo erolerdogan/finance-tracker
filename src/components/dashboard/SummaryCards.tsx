@@ -56,9 +56,6 @@ export function SummaryCards({
       <View style={styles.netCard}>
         <View>
           <Text style={styles.netLabel}>NET CASH FLOW</Text>
-          <Text style={styles.netSubtext}>
-            {totalTransactions} expense items across {categoryCount} categories
-          </Text>
         </View>
         <Text style={[styles.netText, { color: isPositiveNet ? '#34C759' : '#FF3B30' }]}>
           {isPositiveNet ? '+' : ''}€

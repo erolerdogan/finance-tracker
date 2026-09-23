@@ -1,6 +1,6 @@
 import { getCategoryColor } from '@/constants/colors';
 import { FixedOverrideState, Transaction } from '@/db/database';
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Modal,
   StyleSheet,
@@ -25,6 +25,20 @@ export function TransactionDetailModal({
   onClose,
   onSelectFixedState,
 }: TransactionDetailModalProps) {
+  // Local state ensures immediate tab highlighting and persistence
+  const [selectedState, setSelectedState] = useState<FixedOverrideState>(fixedState);
+
+  useEffect(() => {
+    if (visible) {
+      setSelectedState(fixedState);
+    }
+  }, [visible, fixedState]);
+
+  const handleSegmentPress = (newState: FixedOverrideState) => {
+    setSelectedState(newState);
+    onSelectFixedState(newState);
+  };
+
   return (
     <Modal visible={visible} transparent animationType="slide">
       <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={onClose}>
@@ -88,28 +102,28 @@ export function TransactionDetailModal({
 
                   <View style={styles.segmentGroup}>
                     <TouchableOpacity
-                      style={[styles.segmentBtn, fixedState === 'AUTO' && styles.segmentBtnActive]}
-                      onPress={() => onSelectFixedState('AUTO')}
+                      style={[styles.segmentBtn, selectedState === 'AUTO' && styles.segmentBtnActive]}
+                      onPress={() => handleSegmentPress('AUTO')}
                     >
-                      <Text style={[styles.segmentText, fixedState === 'AUTO' && styles.segmentTextActive]}>
+                      <Text style={[styles.segmentText, selectedState === 'AUTO' && styles.segmentTextActive]}>
                         Auto
                       </Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity
-                      style={[styles.segmentBtn, fixedState === 'FIXED' && styles.segmentBtnActive]}
-                      onPress={() => onSelectFixedState('FIXED')}
+                      style={[styles.segmentBtn, selectedState === 'FIXED' && styles.segmentBtnActive]}
+                      onPress={() => handleSegmentPress('FIXED')}
                     >
-                      <Text style={[styles.segmentText, fixedState === 'FIXED' && styles.segmentTextActive]}>
+                      <Text style={[styles.segmentText, selectedState === 'FIXED' && styles.segmentTextActive]}>
                         Fixed
                       </Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity
-                      style={[styles.segmentBtn, fixedState === 'FLEXIBLE' && styles.segmentBtnActive]}
-                      onPress={() => onSelectFixedState('FLEXIBLE')}
+                      style={[styles.segmentBtn, selectedState === 'FLEXIBLE' && styles.segmentBtnActive]}
+                      onPress={() => handleSegmentPress('FLEXIBLE')}
                     >
-                      <Text style={[styles.segmentText, fixedState === 'FLEXIBLE' && styles.segmentTextActive]}>
+                      <Text style={[styles.segmentText, selectedState === 'FLEXIBLE' && styles.segmentTextActive]}>
                         Flexible
                       </Text>
                     </TouchableOpacity>
