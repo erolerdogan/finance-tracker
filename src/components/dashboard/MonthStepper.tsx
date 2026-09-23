@@ -1,3 +1,4 @@
+import { useTheme } from '@/contexts/ThemeContext';
 import { Ionicons } from '@expo/vector-icons';
 import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
@@ -28,47 +29,73 @@ export function MonthStepper({
   onNextMonth,
   onOpenMonthPicker,
 }: MonthStepperProps) {
+  const { colors, isDark } = useTheme();
   const currentIndex = availableMonths.indexOf(selectedMonth);
+  const isPrevDisabled = currentIndex >= availableMonths.length - 1;
+  const isNextDisabled = currentIndex <= 0;
 
   return (
     <View style={styles.container}>
       {/* Month Stepper Navigation */}
-      <View style={styles.monthNavRow}>
+      <View
+        style={[
+          styles.monthNavRow,
+          { backgroundColor: colors.card, borderColor: colors.border },
+        ]}
+      >
         <TouchableOpacity
-          style={[styles.navButton, currentIndex >= availableMonths.length - 1 && styles.navButtonDisabled]}
+          style={[
+            styles.navButton,
+            { backgroundColor: isDark ? '#2C2C2E' : '#F2F2F7' },
+            isPrevDisabled && { opacity: 0.5 },
+          ]}
           onPress={onPrevMonth}
-          disabled={currentIndex >= availableMonths.length - 1}
+          disabled={isPrevDisabled}
         >
           <Ionicons
             name="chevron-back"
             size={18}
-            color={currentIndex >= availableMonths.length - 1 ? '#C7C7CC' : '#007AFF'}
+            color={isPrevDisabled ? colors.textSecondary : colors.accent}
           />
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.monthTitleButton} onPress={onOpenMonthPicker}>
-          <Text style={styles.monthLabelText}>
+          <Text style={[styles.monthLabelText, { color: colors.text }]}>
             {monthNames[selectedMonth] || selectedMonth || 'Select Month'}
           </Text>
-          <Ionicons name="chevron-down" size={14} color="#8E8E93" style={{ marginLeft: 6 }} />
+          <Ionicons
+            name="chevron-down"
+            size={14}
+            color={colors.textSecondary}
+            style={{ marginLeft: 6 }}
+          />
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={[styles.navButton, currentIndex <= 0 && styles.navButtonDisabled]}
+          style={[
+            styles.navButton,
+            { backgroundColor: isDark ? '#2C2C2E' : '#F2F2F7' },
+            isNextDisabled && { opacity: 0.5 },
+          ]}
           onPress={onNextMonth}
-          disabled={currentIndex <= 0}
+          disabled={isNextDisabled}
         >
           <Ionicons
             name="chevron-forward"
             size={18}
-            color={currentIndex <= 0 ? '#C7C7CC' : '#007AFF'}
+            color={isNextDisabled ? colors.textSecondary : colors.accent}
           />
         </TouchableOpacity>
       </View>
 
       {/* Month Statement Coverage Status Badge */}
       {coverageStatus.status !== 'EMPTY' && (
-        <View style={styles.coverageBadgeRow}>
+        <View
+          style={[
+            styles.coverageBadgeRow,
+            { backgroundColor: colors.card, borderColor: colors.border },
+          ]}
+        >
           <View
             style={[
               styles.coverageDot,
@@ -80,9 +107,15 @@ export function MonthStepper({
           <Text
             style={[
               styles.coverageText,
-              coverageStatus.status === 'IN_PROGRESS' && { color: '#D97706' },
-              coverageStatus.status === 'PARTIAL' && { color: '#DC2626' },
-              coverageStatus.status === 'COMPLETE' && { color: '#16A34A' },
+              coverageStatus.status === 'IN_PROGRESS' && {
+                color: isDark ? '#FBBF24' : '#D97706',
+              },
+              coverageStatus.status === 'PARTIAL' && {
+                color: isDark ? '#F87171' : '#DC2626',
+              },
+              coverageStatus.status === 'COMPLETE' && {
+                color: isDark ? '#4ADE80' : '#16A34A',
+              },
             ]}
           >
             {coverageStatus.label}
@@ -99,11 +132,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: '#FFF',
     borderRadius: 14,
     paddingHorizontal: 8,
     paddingVertical: 6,
     marginBottom: 8,
+    borderWidth: StyleSheet.hairlineWidth,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.03,
@@ -114,22 +147,25 @@ const styles = StyleSheet.create({
     width: 34,
     height: 34,
     borderRadius: 10,
-    backgroundColor: '#F2F2F7',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  navButtonDisabled: { backgroundColor: '#F9F9F9' },
-  monthTitleButton: { flexDirection: 'row', alignItems: 'center', paddingVertical: 4, paddingHorizontal: 8 },
-  monthLabelText: { fontSize: 16, fontWeight: '700', color: '#1C1C1E' },
+  monthTitleButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+  },
+  monthLabelText: { fontSize: 16, fontWeight: '700' },
   coverageBadgeRow: {
     flexDirection: 'row',
     alignItems: 'center',
     alignSelf: 'center',
-    backgroundColor: '#FFF',
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 10,
     marginBottom: 12,
+    borderWidth: StyleSheet.hairlineWidth,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.02,

@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import React, { useState } from 'react';
 import {
-    Keyboard, KeyboardAvoidingView, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View
+  Keyboard, KeyboardAvoidingView, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View
 } from 'react-native';
 import { useProfile } from '../contexts/ProfileContext';
 
@@ -13,25 +13,49 @@ interface Props {
 const PRESET_COLORS = ['#007AFF', '#34C759', '#FF9500', '#AF52DE', '#FF2D55', '#5856D6'];
 
 export function ProfileSwitcherModal({ visible, onClose }: Props) {
-  const { profiles, activeProfile, switchProfile, addNewProfile } = useProfile();
-  const [isAdding, setIsAdding] = useState(false);
-  const [newProfileName, setNewProfileName] = useState('');
+  const { profiles, activeProfile, switchProfile, addNewProfile, editProfile } = useProfile();
+  
+  const [mode, setMode] = useState<'LIST' | 'ADD' | 'EDIT'>('LIST');
+  const [selectedProfileId, setSelectedProfileId] = useState<number | null>(null);
+  const [profileName, setProfileName] = useState('');
   const [selectedColor, setSelectedColor] = useState('#007AFF');
 
   const handleClose = () => {
-    setIsAdding(false);
-    setNewProfileName('');
+    setMode('LIST');
+    setSelectedProfileId(null);
+    setProfileName('');
     Keyboard.dismiss();
     onClose();
   };
 
-  const handleCreate = async () => {
-    if (!newProfileName.trim()) return;
+  const handleOpenAdd = () => {
+    setSelectedProfileId(null);
+    setProfileName('');
+    setSelectedColor('#007AFF');
+    setMode('ADD');
+  };
+
+  const handleOpenEdit = (profile: any, e: any) => {
+    e.stopPropagation();
+    setSelectedProfileId(profile.id);
+    setProfileName(profile.name);
+    setSelectedColor(profile.avatarColor || '#007AFF');
+    setMode('EDIT');
+  };
+
+  const handleSave = async () => {
+    if (!profileName.trim()) return;
     Keyboard.dismiss();
-    await addNewProfile(newProfileName.trim(), selectedColor);
-    setNewProfileName('');
-    setIsAdding(false);
-    onClose();
+
+    if (mode === 'EDIT' && selectedProfileId !== null) {
+      if (editProfile) {
+        await editProfile(selectedProfileId, profileName.trim(), selectedColor);
+      }
+    } else {
+      await addNewProfile(profileName.trim(), selectedColor);
+    }
+
+    handleClose();
   };
 
   return (
@@ -45,9 +69,11 @@ export function ProfileSwitcherModal({ visible, onClose }: Props) {
             <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
               <View style={styles.sheet}>
                 <View style={styles.handle} />
-                <Text style={styles.title}>Switch Profile</Text>
+                <Text style={styles.title}>
+                  {mode === 'ADD' ? 'Add New Profile' : mode === 'EDIT' ? 'Edit Profile' : 'Switch Profile'}
+                </Text>
 
-                {!isAdding ? (
+                {mode === 'LIST' ? (
                   <>
                     <ScrollView style={{ maxHeight: 260 }}>
                       {profiles.map((p) => {
@@ -69,9 +95,18 @@ export function ProfileSwitcherModal({ visible, onClose }: Props) {
                               </View>
                               <Text style={styles.profileName}>{p.name}</Text>
                             </View>
-                            {isActive && (
-                              <Ionicons name="checkmark-circle" size={22} color="#007AFF" />
-                            )}
+
+                            <View style={styles.profileRight}>
+                              <TouchableOpacity
+                                style={styles.editBtn}
+                                onPress={(e) => handleOpenEdit(p, e)}
+                              >
+                                <Ionicons name="pencil-outline" size={16} color="#007AFF" />
+                              </TouchableOpacity>
+                              {isActive && (
+                                <Ionicons name="checkmark-circle" size={22} color="#007AFF" />
+                              )}
+                            </View>
                           </TouchableOpacity>
                         );
                       })}
@@ -79,7 +114,7 @@ export function ProfileSwitcherModal({ visible, onClose }: Props) {
 
                     <TouchableOpacity
                       style={styles.addButton}
-                      onPress={() => setIsAdding(true)}
+                      onPress={handleOpenAdd}
                     >
                       <Ionicons
                         name="add-circle-outline"
@@ -97,11 +132,11 @@ export function ProfileSwitcherModal({ visible, onClose }: Props) {
                       style={styles.input}
                       placeholder="e.g. Household, Business, Joint"
                       placeholderTextColor="#8E8E93"
-                      value={newProfileName}
-                      onChangeText={setNewProfileName}
+                      value={profileName}
+                      onChangeText={setProfileName}
                       autoFocus
                       returnKeyType="done"
-                      onSubmitEditing={handleCreate}
+                      onSubmitEditing={handleSave}
                     />
 
                     <Text style={styles.formLabel}>Theme Color</Text>
@@ -122,14 +157,11 @@ export function ProfileSwitcherModal({ visible, onClose }: Props) {
                     <View style={styles.formActions}>
                       <TouchableOpacity
                         style={styles.cancelBtn}
-                        onPress={() => {
-                          setIsAdding(false);
-                          Keyboard.dismiss();
-                        }}
+                        onPress={() => setMode('LIST')}
                       >
                         <Text style={styles.cancelBtnText}>Cancel</Text>
                       </TouchableOpacity>
-                      <TouchableOpacity style={styles.saveBtn} onPress={handleCreate}>
+                      <TouchableOpacity style={styles.saveBtn} onPress={handleSave}>
                         <Text style={styles.saveBtnText}>Save Profile</Text>
                       </TouchableOpacity>
                     </View>
@@ -187,6 +219,12 @@ const styles = StyleSheet.create({
   },
   activeItem: { backgroundColor: '#F2F2F7' },
   profileLeft: { flexDirection: 'row', alignItems: 'center' },
+  profileRight: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  editBtn: {
+    padding: 6,
+    backgroundColor: '#E6F0FF',
+    borderRadius: 8,
+  },
   avatar: {
     width: 36,
     height: 36,

@@ -1,3 +1,4 @@
+import { useTheme } from '@/contexts/ThemeContext';
 import { FixedCostSummary } from '@/db/database';
 import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
@@ -8,23 +9,43 @@ interface FixedFlexibleCardProps {
 }
 
 export function FixedFlexibleCard({ summary, onPress }: FixedFlexibleCardProps) {
+  const { colors, isDark } = useTheme();
   const { fixedTotal, flexibleTotal, fixedPercentage, flexiblePercentage, fixedItemsCount } = summary;
 
   const displayFixedPct = Math.round(fixedPercentage);
   const displayFlexiblePct = Math.round(flexiblePercentage);
 
   return (
-    <TouchableOpacity style={styles.cardContainer} activeOpacity={0.8} onPress={onPress}>
+    <TouchableOpacity
+      style={[
+        styles.cardContainer,
+        { backgroundColor: colors.card, borderColor: colors.border },
+      ]}
+      activeOpacity={0.8}
+      onPress={onPress}
+    >
       {/* Header */}
       <View style={styles.cardHeader}>
-        <Text style={styles.cardTitle}>Fixed vs. Flexible</Text>
-        <View style={styles.badge}>
-          <Text style={styles.badgeText}>{fixedItemsCount} Fixed Items</Text>
+        <Text style={[styles.cardTitle, { color: colors.text }]}>Fixed vs. Flexible</Text>
+        <View
+          style={[
+            styles.badge,
+            { backgroundColor: isDark ? '#2A2840' : '#5856D615' },
+          ]}
+        >
+          <Text style={[styles.badgeText, { color: '#5856D6' }]}>
+            {fixedItemsCount} Fixed Items
+          </Text>
         </View>
       </View>
 
       {/* Two-Tone Progress Bar */}
-      <View style={styles.barContainer}>
+      <View
+        style={[
+          styles.barContainer,
+          { backgroundColor: isDark ? '#38383A' : '#E5E5EA' },
+        ]}
+      >
         <View style={[styles.fixedBar, { width: `${displayFixedPct}%` }]} />
         <View style={[styles.flexibleBar, { width: `${displayFlexiblePct}%` }]} />
       </View>
@@ -35,23 +56,34 @@ export function FixedFlexibleCard({ summary, onPress }: FixedFlexibleCardProps) 
         <View style={styles.statCol}>
           <View style={styles.indicatorRow}>
             <View style={[styles.dot, { backgroundColor: '#5856D6' }]} />
-            <Text style={styles.statLabel}>Fixed</Text>
+            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Fixed</Text>
           </View>
-          <Text style={styles.statAmount}>
-            €{fixedTotal.toFixed(0)} <Text style={styles.statPercent}>({displayFixedPct}%)</Text>
+          <Text style={[styles.statAmount, { color: colors.text }]}>
+            €{fixedTotal.toFixed(0)}{' '}
+            <Text style={[styles.statPercent, { color: colors.textSecondary }]}>
+              ({displayFixedPct}%)
+            </Text>
           </Text>
         </View>
 
-        <View style={styles.divider} />
+        <View
+          style={[
+            styles.divider,
+            { backgroundColor: isDark ? '#38383A' : '#E5E5EA' },
+          ]}
+        />
 
         {/* Flexible Spending */}
         <View style={styles.statCol}>
           <View style={styles.indicatorRow}>
             <View style={[styles.dot, { backgroundColor: '#FF9500' }]} />
-            <Text style={styles.statLabel}>Flexible</Text>
+            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Flexible</Text>
           </View>
-          <Text style={styles.statAmount}>
-            €{flexibleTotal.toFixed(0)} <Text style={styles.statPercent}>({displayFlexiblePct}%)</Text>
+          <Text style={[styles.statAmount, { color: colors.text }]}>
+            €{flexibleTotal.toFixed(0)}{' '}
+            <Text style={[styles.statPercent, { color: colors.textSecondary }]}>
+              ({displayFlexiblePct}%)
+            </Text>
           </Text>
         </View>
       </View>
@@ -61,10 +93,10 @@ export function FixedFlexibleCard({ summary, onPress }: FixedFlexibleCardProps) 
 
 const styles = StyleSheet.create({
   cardContainer: {
-    backgroundColor: '#FFF',
     borderRadius: 20,
     padding: 16,
     marginVertical: 8,
+    borderWidth: StyleSheet.hairlineWidth,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.05,
@@ -80,10 +112,8 @@ const styles = StyleSheet.create({
   cardTitle: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#1C1C1E',
   },
   badge: {
-    backgroundColor: '#5856D615',
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 8,
@@ -91,12 +121,10 @@ const styles = StyleSheet.create({
   badgeText: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#5856D6',
   },
   barContainer: {
     height: 8,
     borderRadius: 4,
-    backgroundColor: '#E5E5EA',
     flexDirection: 'row',
     overflow: 'hidden',
     marginBottom: 14,
@@ -120,7 +148,6 @@ const styles = StyleSheet.create({
   divider: {
     width: StyleSheet.hairlineWidth,
     height: 28,
-    backgroundColor: '#E5E5EA',
     marginHorizontal: 12,
   },
   indicatorRow: {
@@ -137,16 +164,13 @@ const styles = StyleSheet.create({
   statLabel: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#8E8E93',
   },
   statAmount: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#1C1C1E',
   },
   statPercent: {
     fontSize: 12,
     fontWeight: '500',
-    color: '#8E8E93',
   },
 });

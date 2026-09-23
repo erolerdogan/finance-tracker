@@ -1,6 +1,7 @@
 import { TransactionDetailModal } from '@/components/modals/TransactionDetailModal';
 import { TransactionListModal } from '@/components/modals/TransactionListModal';
 import { getCategoryColor } from '@/constants/colors';
+import { useTheme } from '@/contexts/ThemeContext';
 import {
   FixedOverrideState,
   getMonthlyCategoryTotals,
@@ -10,7 +11,7 @@ import {
   Transaction
 } from '@/db/database';
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import React, { useCallback, useState } from 'react';
 import {
@@ -55,7 +56,9 @@ const MONTH_NAMES: Record<string, string> = {
 };
 
 export default function AnalyticsScreen() {
+  const router = useRouter();
   const db = useSQLiteContext();
+  const { colors, isDark } = useTheme();
   const { activeProfile } = useProfile();
   const activeProfileId = activeProfile?.id ?? 1;
 
@@ -209,14 +212,15 @@ export default function AnalyticsScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top']}>
-      <View style={{ flex: 1 }}>
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]} edges={['top']}>
+      <View style={[styles.container, { backgroundColor: colors.background }]}>
         <ScrollView
-          style={styles.container}
+          style={{ flex: 1 }}
           contentContainerStyle={styles.content}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
+              tintColor={colors.accent}
               onRefresh={() => {
                 setRefreshing(true);
                 loadAnalyticsData();
@@ -224,6 +228,21 @@ export default function AnalyticsScreen() {
             />
           }
         >
+          {/* Top Header Bar with Settings Icon */}
+          <View style={styles.headerRow}>
+            <Text style={[styles.headerTitle, { color: colors.text }]}>Analytics</Text>
+            <TouchableOpacity
+              style={[
+                styles.settingsHeaderBtn,
+                { backgroundColor: colors.card, borderColor: colors.border },
+              ]}
+              activeOpacity={0.8}
+              onPress={() => router.push('/settings')}
+            >
+              <Ionicons name="settings-outline" size={20} color={colors.text} />
+            </TouchableOpacity>
+          </View>
+
           {/* Horizontal Filter Pills */}
           <ScrollView
             horizontal
@@ -241,6 +260,7 @@ export default function AnalyticsScreen() {
                   activeOpacity={0.7}
                   style={[
                     styles.chipPill,
+                    { backgroundColor: isDark ? '#2C2C2E' : '#E5E5EA' },
                     isActive && { backgroundColor: color },
                   ]}
                   onPress={() => {
@@ -255,6 +275,7 @@ export default function AnalyticsScreen() {
                   <Text
                     style={[
                       styles.chipText,
+                      { color: colors.text },
                       isActive && styles.chipTextActive,
                     ]}
                   >
@@ -266,10 +287,10 @@ export default function AnalyticsScreen() {
           </ScrollView>
 
           {/* 1. Interactive Line Graph Card */}
-          <View style={styles.chartCard}>
+          <View style={[styles.chartCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
             <View style={styles.chartHeaderRow}>
-              <Text style={styles.chartTitle}>Spending Velocity</Text>
-              <Text style={styles.chartHintText}>Drag across chart to scrub</Text>
+              <Text style={[styles.chartTitle, { color: colors.text }]}>Spending Velocity</Text>
+              <Text style={[styles.chartHintText, { color: colors.textSecondary }]}>Drag across chart to scrub</Text>
             </View>
 
             {loading && !refreshing ? (
@@ -296,9 +317,9 @@ export default function AnalyticsScreen() {
                   spacing={24}
                   xAxisThickness={1}
                   yAxisThickness={0}
-                  xAxisColor="#E5E5EA"
-                  yAxisTextStyle={{ color: '#8E8E93', fontSize: 10 }}
-                  xAxisLabelTextStyle={{ color: '#8E8E93', fontSize: 10 }}
+                  xAxisColor={colors.border}
+                  yAxisTextStyle={{ color: colors.textSecondary, fontSize: 10 }}
+                  xAxisLabelTextStyle={{ color: colors.textSecondary, fontSize: 10 }}
                   pointerConfig={{
                     pointerStripUptoDataPoint: true,
                     pointerStripColor: activeColor,
@@ -329,21 +350,29 @@ export default function AnalyticsScreen() {
             {/* Inspect Banner below Chart */}
             {scrubbedMonthKey && scrubbedAmount !== null && (
               <TouchableOpacity
-                style={[styles.inspectBanner, { borderLeftColor: activeColor }]}
+                style={[
+                  styles.inspectBanner,
+                  { backgroundColor: isDark ? '#2C2C2E' : '#F2F2F7', borderLeftColor: activeColor },
+                ]}
                 activeOpacity={0.8}
                 onPress={() => handleOpenMonthDetails(scrubbedMonthKey)}
               >
                 <View>
-                  <Text style={styles.inspectMonthText}>
+                  <Text style={[styles.inspectMonthText, { color: colors.text }]}>
                     {MONTH_NAMES[scrubbedMonthKey] || scrubbedMonthKey}
                   </Text>
-                  <Text style={styles.inspectAmountText}>
+                  <Text style={[styles.inspectAmountText, { color: colors.textSecondary }]}>
                     €{scrubbedAmount.toLocaleString()}
                   </Text>
                 </View>
-                <View style={styles.inspectActionBtn}>
-                  <Text style={styles.inspectActionText}>Inspect Items</Text>
-                  <Ionicons name="chevron-forward" size={14} color="#007AFF" />
+                <View
+                  style={[
+                    styles.inspectActionBtn,
+                    { backgroundColor: isDark ? '#1A2942' : '#E6F0FF' },
+                  ]}
+                >
+                  <Text style={[styles.inspectActionText, { color: colors.accent }]}>Inspect Items</Text>
+                  <Ionicons name="chevron-forward" size={14} color={colors.accent} />
                 </View>
               </TouchableOpacity>
             )}
@@ -351,28 +380,28 @@ export default function AnalyticsScreen() {
 
           {/* 2. Metric Summary Grid */}
           <View style={styles.grid}>
-            <View style={styles.metricCard}>
-              <Text style={styles.metricLabel}>Total Year Spending</Text>
+            <View style={[styles.metricCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              <Text style={[styles.metricLabel, { color: colors.textSecondary }]}>Total Year Spending</Text>
               <Text style={[styles.metricValue, { color: activeColor }]}>
                 €{summary.total.toLocaleString('en-US', { maximumFractionDigits: 0 })}
               </Text>
             </View>
 
-            <View style={styles.metricCard}>
-              <Text style={styles.metricLabel}>Monthly Average</Text>
-              <Text style={styles.metricValue}>
+            <View style={[styles.metricCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              <Text style={[styles.metricLabel, { color: colors.textSecondary }]}>Monthly Average</Text>
+              <Text style={[styles.metricValue, { color: colors.text }]}>
                 €{summary.average.toLocaleString('en-US', { maximumFractionDigits: 0 })}
               </Text>
             </View>
 
-            <View style={styles.metricCard}>
-              <Text style={styles.metricLabel}>Peak Month</Text>
-              <Text style={styles.metricValue}>{summary.highestMonth}</Text>
+            <View style={[styles.metricCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              <Text style={[styles.metricLabel, { color: colors.textSecondary }]}>Peak Month</Text>
+              <Text style={[styles.metricValue, { color: colors.text }]}>{summary.highestMonth}</Text>
             </View>
 
-            <View style={styles.metricCard}>
-              <Text style={styles.metricLabel}>Lowest Month</Text>
-              <Text style={styles.metricValue}>{summary.lowestMonth}</Text>
+            <View style={[styles.metricCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              <Text style={[styles.metricLabel, { color: colors.textSecondary }]}>Lowest Month</Text>
+              <Text style={[styles.metricValue, { color: colors.text }]}>{summary.lowestMonth}</Text>
             </View>
           </View>
         </ScrollView>
@@ -403,9 +432,34 @@ export default function AnalyticsScreen() {
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: '#F2F2F7' },
-  container: { flex: 1, backgroundColor: '#F2F2F7' },
+  safeArea: { flex: 1 },
+  container: { flex: 1 },
   content: { padding: 16, paddingBottom: 32 },
+  headerRow: {
+    marginTop: 8,
+    marginBottom: 12,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  headerTitle: {
+    fontSize: 24,
+    fontWeight: '700',
+    letterSpacing: -0.5,
+  },
+  settingsHeaderBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: StyleSheet.hairlineWidth,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 3,
+    elevation: 1,
+  },
 
   pillScrollView: { marginBottom: 12, marginTop: 4 },
   pillContainer: { gap: 8, paddingRight: 10 },
@@ -415,7 +469,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 18,
-    backgroundColor: '#E5E5EA',
   },
   miniDot: {
     width: 6,
@@ -426,17 +479,16 @@ const styles = StyleSheet.create({
   chipText: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#1C1C1E',
   },
   chipTextActive: {
     color: '#FFF',
   },
 
   chartCard: {
-    backgroundColor: '#FFF',
     borderRadius: 16,
     padding: 16,
     marginBottom: 16,
+    borderWidth: StyleSheet.hairlineWidth,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.03,
@@ -449,15 +501,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 8,
   },
-  chartTitle: { fontSize: 14, fontWeight: '600', color: '#1C1C1E' },
-  chartHintText: { fontSize: 11, color: '#8E8E93' },
+  chartTitle: { fontSize: 14, fontWeight: '600' },
+  chartHintText: { fontSize: 11 },
   chartWrapper: { alignItems: 'center', paddingTop: 8 },
 
   inspectBanner: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: '#F2F2F7',
     borderRadius: 12,
     borderLeftWidth: 4,
     paddingHorizontal: 12,
@@ -467,17 +518,14 @@ const styles = StyleSheet.create({
   inspectMonthText: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#1C1C1E',
   },
   inspectAmountText: {
     fontSize: 11,
-    color: '#8E8E93',
     marginTop: 1,
   },
   inspectActionBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#E6F0FF',
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 8,
@@ -485,22 +533,21 @@ const styles = StyleSheet.create({
   inspectActionText: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#007AFF',
     marginRight: 4,
   },
 
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   metricCard: {
     width: '48%',
-    backgroundColor: '#FFF',
     borderRadius: 14,
     padding: 14,
+    borderWidth: StyleSheet.hairlineWidth,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.03,
     shadowRadius: 4,
     elevation: 1,
   },
-  metricLabel: { fontSize: 11, color: '#8E8E93', fontWeight: '500' },
-  metricValue: { fontSize: 18, fontWeight: '700', color: '#1C1C1E', marginTop: 4 },
+  metricLabel: { fontSize: 11, fontWeight: '500' },
+  metricValue: { fontSize: 18, fontWeight: '700', marginTop: 4 },
 });

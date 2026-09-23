@@ -1,3 +1,4 @@
+import { ThemeProvider } from '@/contexts/ThemeContext';
 import { initDatabase } from '@/db/database';
 import { requestAndScheduleImportReminders } from '@/utils/notifications';
 import { Stack } from 'expo-router';
@@ -36,13 +37,33 @@ function AppInitializer() {
     );
   }
 
-  return <Stack screenOptions={{ headerShown: false }} />;
+  return (
+    <Stack screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+      <Stack.Screen
+        name="settings"
+        options={{
+          headerShown: false,
+          presentation: 'modal',
+        }}
+      />
+      <Stack.Screen
+        name="goals"
+        options={{
+          headerShown: false,
+          presentation: 'modal',
+        }}
+      />
+    </Stack>
+  );
 }
 
 export default function RootLayout() {
   return (
-    <SQLiteProvider databaseName="fintrack.db">
-      <AppInitializer />
-    </SQLiteProvider>
+    <ThemeProvider>
+      <SQLiteProvider databaseName="fintrack.db">
+        <AppInitializer />
+      </SQLiteProvider>
+    </ThemeProvider>
   );
 }

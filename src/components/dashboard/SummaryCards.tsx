@@ -1,13 +1,16 @@
-import { MonthlySummary } from '@/db/database';
-import { Ionicons } from '@expo/vector-icons';
+import { useTheme } from '@/contexts/ThemeContext';
 import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 interface SummaryCardsProps {
-  summary: MonthlySummary;
+  summary: {
+    totalIncome: number;
+    totalExpenses: number;
+    netSavings: number;
+  };
   totalTransactions: number;
   categoryCount: number;
-  onOpenCardModal: (type: 'INCOME' | 'EXPENSE') => void;
+  onOpenCardModal: (type: 'INCOME' | 'EXPENSE' | 'FIXED' | 'FLEXIBLE') => void;
 }
 
 export function SummaryCards({
@@ -16,76 +19,82 @@ export function SummaryCards({
   categoryCount,
   onOpenCardModal,
 }: SummaryCardsProps) {
-  const isPositiveNet = summary.netSavings >= 0;
+  const { colors } = useTheme();
 
   return (
-    <View style={styles.summaryContainer}>
-      <View style={styles.cardRow}>
-        {/* Income Card */}
+    <View style={styles.container}>
+      <View style={styles.row}>
         <TouchableOpacity
-          style={[styles.card, styles.incomeCard]}
+          style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}
           activeOpacity={0.8}
           onPress={() => onOpenCardModal('INCOME')}
         >
-          <View style={styles.cardHeaderWithIcon}>
-            <Text style={styles.cardLabel}>INCOME</Text>
-            <Ionicons name="open-outline" size={12} color="#34C759" />
-          </View>
-          <Text style={styles.incomeText}>
-            +€{summary.totalIncome.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          <Text style={[styles.label, { color: colors.textSecondary }]}>Total Income</Text>
+          <Text style={[styles.amount, { color: '#34C759' }]}>
+            €{summary.totalIncome.toFixed(2)}
           </Text>
         </TouchableOpacity>
 
-        {/* Expenses Card */}
         <TouchableOpacity
-          style={[styles.card, styles.expenseCard]}
+          style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}
           activeOpacity={0.8}
           onPress={() => onOpenCardModal('EXPENSE')}
         >
-          <View style={styles.cardHeaderWithIcon}>
-            <Text style={styles.cardLabel}>EXPENSES</Text>
-            <Ionicons name="open-outline" size={12} color="#FF3B30" />
-          </View>
-          <Text style={styles.expenseText}>
-            -€{summary.totalExpenses.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          <Text style={[styles.label, { color: colors.textSecondary }]}>Total Expenses</Text>
+          <Text style={[styles.amount, { color: '#FF3B30' }]}>
+            €{summary.totalExpenses.toFixed(2)}
           </Text>
         </TouchableOpacity>
       </View>
 
-      {/* Net Cash Flow Card */}
-      <View style={styles.netCard}>
+      <View style={[styles.netCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
         <View>
-          <Text style={styles.netLabel}>NET CASH FLOW</Text>
+          <Text style={[styles.label, { color: colors.textSecondary }]}>NET CASH FLOW</Text>
+          <Text
+            style={[
+              styles.netAmount,
+              { color: summary.netSavings >= 0 ? '#34C759' : '#FF3B30' },
+            ]}
+          >
+            €{summary.netSavings.toFixed(2)}
+          </Text>
         </View>
-        <Text style={[styles.netText, { color: isPositiveNet ? '#34C759' : '#FF3B30' }]}>
-          {isPositiveNet ? '+' : ''}€
-          {summary.netSavings.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-        </Text>
+
       </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  summaryContainer: { marginBottom: 12 },
-  cardRow: { flexDirection: 'row', gap: 12 },
-  card: { flex: 1, padding: 16, borderRadius: 16, backgroundColor: '#FFF' },
-  cardHeaderWithIcon: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
-  incomeCard: { borderLeftWidth: 4, borderLeftColor: '#34C759' },
-  expenseCard: { borderLeftWidth: 4, borderLeftColor: '#FF3B30' },
-  cardLabel: { fontSize: 11, color: '#8E8E93', fontWeight: '700', letterSpacing: 0.5 },
-  incomeText: { fontSize: 18, fontWeight: '700', color: '#34C759' },
-  expenseText: { fontSize: 18, fontWeight: '700', color: '#FF3B30' },
-  netCard: {
-    marginTop: 12,
+  container: { gap: 12, marginBottom: 16 },
+  row: { flexDirection: 'row', gap: 12 },
+  card: {
+    flex: 1,
+    borderRadius: 16.5,
     padding: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.03,
+    shadowRadius: 3,
+    elevation: 1,
+  },
+  netCard: {
     borderRadius: 16,
-    backgroundColor: '#FFF',
+    padding: 16,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    borderWidth: StyleSheet.hairlineWidth,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.03,
+    shadowRadius: 3,
+    elevation: 1,
   },
-  netLabel: { fontSize: 11, fontWeight: '700', color: '#8E8E93', letterSpacing: 0.5 },
-  netSubtext: { fontSize: 11, color: '#8E8E93', marginTop: 2 },
-  netText: { fontSize: 20, fontWeight: '800' },
+  label: { fontSize: 12, fontWeight: '600', marginBottom: 4, letterSpacing: 0.3 },
+  amount: { fontSize: 20, fontWeight: '700' },
+  netAmount: { fontSize: 22, fontWeight: '700', marginTop: 2 },
+  statsMeta: { alignItems: 'flex-end', justifyContent: 'center' },
+  metaText: { fontSize: 11, fontWeight: '500' },
 });

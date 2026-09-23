@@ -193,22 +193,18 @@ export async function getProfiles(db: SQLiteDatabase): Promise<Profile[]> {
   return await db.getAllAsync<Profile>(`SELECT * FROM profiles ORDER BY id ASC;`);
 }
 
-export async function createProfile(
-  db: SQLiteDatabase,
-  name: string,
-  color: string = '#007AFF'
-): Promise<Profile | null> {
-  if (!db) return null;
-  const res = await db.runAsync(
-    `INSERT INTO profiles (name, avatarColor, isDefault) VALUES (?, ?, 0);`,
-    [name, color]
-  );
-  return {
-    id: res.lastInsertRowId,
-    name,
-    avatarColor: color,
-    isDefault: 0,
-  };
+export async function createProfile(db: SQLiteDatabase, name: string, avatarColor: string): Promise<Profile | null> {
+  try {
+    const result = await db.runAsync(
+      `INSERT INTO profiles (name, avatarColor, isDefault) VALUES (?, ?, 0);`,
+      [name, avatarColor]
+    );
+    const newId = result.lastInsertRowId;
+    return { id: newId, name, avatarColor, isDefault: 0 };
+  } catch (error) {
+    console.error('Failed to create profile:', error);
+    return null;
+  }
 }
 
 export async function getFixedVsFlexibleSummary(
