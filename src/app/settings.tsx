@@ -1,6 +1,8 @@
 import { ProfileSwitcherModal } from '@/components/ProfileSwitcherModal';
+import { useProfile } from '@/contexts/ProfileContext';
 import { useTheme } from '@/contexts/ThemeContext';
-import { clearAllTransactions, insertTransactions } from '@/db/database';
+import { clearAllTransactions } from '@/db/database';
+import { processBatchImport } from '@/services/importService';
 import {
     cancelCurrentMonthReminders,
     requestAndScheduleImportReminders
@@ -23,7 +25,6 @@ import {
     View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useProfile } from '../contexts/ProfileContext';
 
 export default function SettingsScreen() {
   const { isDark, toggleTheme, colors } = useTheme();
@@ -80,12 +81,15 @@ export default function SettingsScreen() {
         return;
       }
 
-      await insertTransactions(db, parsedTransactions, activeProfileId);
+      // Execute batch deduplication import
+      const summary = await processBatchImport(db, parsedTransactions, activeProfileId);
       await cancelCurrentMonthReminders();
 
       Alert.alert(
-        'Success',
-        `Imported ${parsedTransactions.length} transactions for ${activeProfile?.name || 'this profile'}.`
+        'Import Completed',
+        `Processed ${summary.totalProcessed} transactions for ${activeProfile?.name || 'this profile'}.\n\n` +
+          `• Added: ${summary.insertedCount}\n` +
+          `• Skipped duplicates: ${summary.skippedCount}`
       );
     } catch (error: any) {
       console.error('Import Error:', error);

@@ -137,16 +137,14 @@ function extractCleanDescription(rawDescription: string): { merchant: string; cl
   if (!rawDescription) return { merchant: 'Unknown', cleanDescription: 'Bank Transaction' };
   let text = String(rawDescription).replace(/\\/g, '').replace(/["']/g, '').trim();
 
-  // 1. ISO 20022 XML Slash Tagged SEPA / Wero Strings (e.g. /TRTP/iDEAL/Wero/.../NAME/bol.com/REMI/...)
+  // 1. ISO 20022 XML Slash Tagged SEPA / Wero Strings
   if (text.includes('/') && (text.includes('/TRTP/') || text.includes('/NAME/') || text.includes('/CSID/') || text.includes('/REMI/'))) {
-    // Check for explicit party name in /NAME/ tag
     const slashName = text.match(/\/NAME\/([^/]+)/i);
     if (slashName && slashName[1] && slashName[1].trim()) {
       const name = slashName[1].trim();
       return { merchant: name, cleanDescription: name };
     }
 
-    // Check for merchant in /REMI/ (remittance info) tag
     const slashRemi = text.match(/\/REMI\/([^/]+)/i);
     if (slashRemi && slashRemi[1] && slashRemi[1].trim()) {
       const remi = slashRemi[1].trim();
@@ -155,7 +153,6 @@ function extractCleanDescription(rawDescription: string): { merchant: string; cl
       }
     }
 
-    // Check for payment network or service tag in /TRTP/ tag
     const slashTrtp = text.match(/\/TRTP\/([^/]+)/i);
     if (slashTrtp && slashTrtp[1] && slashTrtp[1].trim()) {
       const tag = slashTrtp[1].trim();
@@ -165,7 +162,7 @@ function extractCleanDescription(rawDescription: string): { merchant: string; cl
     }
   }
 
-  // 2. PIN / Apple Pay transactions (e.g. "BEA, Apple Pay Kruidvat 1171, PAS451...")
+  // 2. PIN / Apple Pay transactions
   const posMatch = text.match(/(?:BEA|GEA),\s*(?:Apple Pay|Betaalpas|Google Pay|Pin)?\s+([^\d,]+)/i);
   if (posMatch && posMatch[1]) {
     const cleaned = posMatch[1].trim();
@@ -192,7 +189,7 @@ function extractCleanDescription(rawDescription: string): { merchant: string; cl
     }
   }
 
-  // 5. Fallback: Strip all XML slash tags (/CSID/.../, /IBAN/.../), payment keywords, and clean
+  // 5. Fallback
   let cleanedText = text
     .replace(/\/[A-Z0-9]+\/[^/]+/gi, '')
     .replace(/\b(SEPA|Incasso|algemeen|doorlopend|Overboeking|BEA|GEA|Apple Pay|Betaalpas|iDEAL|Wero)\b/gi, '')
@@ -275,14 +272,14 @@ function parseMatrixData(
     if (!dateResult) continue;
 
     const originalDesc = String(rawDesc ?? '').replace(/\\/g, '').replace(/\s+/g, ' ').trim();
-    const { merchant, cleanDescription } = extractCleanDescription(originalDesc);
+    const { merchant } = extractCleanDescription(originalDesc);
     const monthName = dateResult.iso.substring(0, 7);
     const category = classifyTransaction(originalDesc, customRules);
 
     transactions.push({
       date: dateResult.iso,
       amount: Number(signedAmount.toFixed(2)),
-      rawDescription: cleanDescription,
+      rawDescription: originalDesc, // Preserves identical raw description for exact hashing
       merchant,
       category,
       monthName,

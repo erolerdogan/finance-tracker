@@ -128,6 +128,18 @@ export async function initDatabase(db: SQLiteDatabase): Promise<void> {
       is_fixed INTEGER
     );
 
+    -- 1. Deduplicate existing rows before creating the index
+    DELETE FROM transactions 
+    WHERE id NOT IN (
+      SELECT MIN(id) 
+      FROM transactions 
+      GROUP BY date, amount, rawDescription, profileId
+    );
+
+    -- 2. Safely create the composite unique index
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_dedup 
+    ON transactions(date, amount, rawDescription, profileId);
+
     CREATE TABLE IF NOT EXISTS category_rules (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       profileId INTEGER NOT NULL DEFAULT 1,
@@ -152,7 +164,7 @@ export async function initDatabase(db: SQLiteDatabase): Promise<void> {
       UNIQUE(keyword, profileId)
     );
   `);
-
+  
   try {
     await db.execAsync(`ALTER TABLE transactions ADD COLUMN profileId INTEGER NOT NULL DEFAULT 1;`);
   } catch (e) {}
@@ -364,11 +376,14 @@ export async function insertTransactions(
   db: SQLiteDatabase,
   transactions: Omit<Transaction, 'id'>[],
   profileId: number = 1
-): Promise<void> {
+): Promise<{ insertedCount: number; skippedCount: number }> {
+  let insertedCount = 0;
+  let skippedCount = 0;
+
   await db.withTransactionAsync(async () => {
     for (const tx of transactions) {
-      await db.runAsync(
-        `INSERT INTO transactions
+      const result = await db.runAsync(
+        `INSERT OR IGNORE INTO transactions
            (profileId, date, amount, rawDescription, merchant, category, monthName, isZeroFlagged, dateAmbiguous, is_fixed)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL);`,
         [
@@ -383,8 +398,16 @@ export async function insertTransactions(
           tx.dateAmbiguous ?? 0,
         ]
       );
+
+      if (result.changes > 0) {
+        insertedCount++;
+      } else {
+        skippedCount++;
+      }
     }
   });
+
+  return { insertedCount, skippedCount };
 }
 
 export async function clearAllTransactions(
@@ -787,11 +810,9 @@ export async function getTransactionFixedState(
 ): Promise<FixedOverrideState> {
   if (!db || !transaction) return 'AUTO';
 
-  // 1. Direct explicit user override on transaction row
   if (transaction.is_fixed === 1) return 'FIXED';
   if (transaction.is_fixed === 0) return 'FLEXIBLE';
 
-  // 2. Explicit rule table override
   const keyword =
     transaction.merchant && transaction.merchant !== 'Unknown'
       ? transaction.merchant
@@ -809,7 +830,6 @@ export async function getTransactionFixedState(
     }
   }
 
-  // 3. Default state for all fresh imports
   return 'AUTO';
 }
 
@@ -826,13 +846,11 @@ export async function setMerchantFixedOverride(
   const searchPattern = `%${uppercaseKeyword}%`;
 
   if (overrideState === 'AUTO') {
-    // 1. Delete manual override rule
     await db.runAsync(
       `DELETE FROM fixed_cost_rules WHERE UPPER(keyword) = ? AND profileId = ?;`,
       [uppercaseKeyword, profileId]
     );
 
-    // 2. Clear explicit override column on transactions back to NULL (AUTO)
     await db.runAsync(
       `UPDATE transactions 
        SET is_fixed = NULL 
@@ -840,10 +858,8 @@ export async function setMerchantFixedOverride(
       [searchPattern, searchPattern, profileId]
     );
   } else {
-    // 1 for FIXED, 0 for FLEXIBLE
     const isFixedVal = overrideState === 'FIXED' ? 1 : 0;
 
-    // 1. Upsert rule table
     await db.runAsync(
       `INSERT INTO fixed_cost_rules (keyword, category, overrideState, profileId) 
        VALUES (?, ?, ?, ?)
@@ -853,7 +869,6 @@ export async function setMerchantFixedOverride(
       [uppercaseKeyword, category, overrideState, profileId]
     );
 
-    // 2. Force write explicit 1 or 0 across all matching transactions
     await db.runAsync(
       `UPDATE transactions 
        SET is_fixed = ? 
@@ -982,7 +997,6 @@ export async function getAnnualTrendWithBudget(
 ): Promise<AnnualTrendPointWithBudget[]> {
   const yearlyData = await getFullYearTrendData(db, year, profileId);
   
-  // Build a map of actual monthly expenses depending on category filter
   let query = `
     SELECT monthName, TOTAL(ABS(amount)) as totalAmount
     FROM transactions
