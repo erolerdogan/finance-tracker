@@ -4,9 +4,11 @@ import { getCategoryColor } from '@/constants/colors';
 import { useTheme } from '@/contexts/ThemeContext';
 import {
   FixedOverrideState,
-  getMonthlyCategoryTotals,
+  getAnnualTrendWithBudget,
+  getCategoryGoal,
   getTransactionFixedState,
   getTransactionsByMonthAndCategory,
+  setCategoryGoal,
   setMerchantFixedOverride,
   Transaction
 } from '@/db/database';
@@ -20,6 +22,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View
 } from 'react-native';
@@ -70,6 +73,11 @@ export default function AnalyticsScreen() {
 
   const [chartData, setChartData] = useState<any[]>([]);
   const [maxChartValue, setMaxChartValue] = useState<number>(100);
+  const [categoryBudget, setCategoryBudget] = useState<number>(0);
+
+  // Inline Quick-Set Budget State
+  const [isEditingInline, setIsEditingInline] = useState(false);
+  const [inlineInputVal, setInlineInputVal] = useState('');
 
   // Drill-down Modals State
   const [listModalVisible, setListModalVisible] = useState(false);
@@ -94,51 +102,65 @@ export default function AnalyticsScreen() {
     try {
       setLoading(true);
 
-      const months = [
-        '2026-01', '2026-02', '2026-03', '2026-04',
-        '2026-05', '2026-06', '2026-07', '2026-08',
-        '2026-09', '2026-10', '2026-11', '2026-12'
-      ];
+      const trendWithBudget = await getAnnualTrendWithBudget(db, '2026', selectedCategory, activeProfileId);
+      const currentGoal = await getCategoryGoal(db, selectedCategory, activeProfileId);
+      setCategoryBudget(currentGoal);
 
-      const monthlyTotals = await Promise.all(
-        months.map(async (m) => {
-          const totals = await getMonthlyCategoryTotals(db, m, activeProfileId);
-          let sum = 0;
-          if (selectedCategory === 'All') {
-            sum = totals.reduce((acc, curr) => acc + curr.totalAmount, 0);
-          } else {
-            const match = totals.find((c) => c.category === selectedCategory);
-            sum = match ? match.totalAmount : 0;
-          }
-          return { month: m, amount: sum };
-        })
-      );
-
-      const values = monthlyTotals.map((m) => m.amount);
-      const peakVal = Math.max(...values, 10);
+      const values = trendWithBudget.map((m) => m.totalAmount);
+      const peakVal = Math.max(...values, currentGoal, 10);
       const calculatedMax = Math.ceil(peakVal * 1.15);
       setMaxChartValue(calculatedMax);
 
-      const formattedChartData = monthlyTotals.map((item) => ({
-        value: Math.round(item.amount),
-        label: item.month.split('-')[1],
-        monthKey: item.month,
-      }));
+      const formattedChartData = trendWithBudget.map((item) => {
+        const hasData = item.totalAmount > 0;
+        const val = hasData ? Math.round(item.totalAmount) : 0;
+        const limit = item.budgetLimit;
+
+        let ptColor = activeColor;
+        if (limit > 0 && hasData) {
+          if (val > limit) ptColor = '#FF3B30'; // Red
+          else if (val === limit) ptColor = '#FFCC00'; // Yellow
+          else ptColor = '#34C759'; // Green
+        }
+
+        return {
+          value: val,
+          label: item.monthName.split('-')[1],
+          monthKey: item.monthName,
+          // If no data exists for this month, hide the dot and make the point non-interactive/invisible!
+          hideDataPoint: !hasData,
+          dataPointColor: hasData ? ptColor : 'transparent',
+          customDataPoint: hasData
+            ? () => (
+                <View
+                  style={{
+                    width: 10,
+                    height: 10,
+                    borderRadius: 5,
+                    backgroundColor: ptColor,
+                    borderWidth: 2,
+                    borderColor: colors.card,
+                  }}
+                />
+              )
+            : undefined,
+        };
+      });
 
       const total = values.reduce((a, b) => a + b, 0);
       const avg = total / (values.length || 1);
       const maxVal = Math.max(...values);
       const minVal = Math.min(...values.filter((v) => v > 0));
 
-      const highest = monthlyTotals.find((m) => m.amount === maxVal)?.month || '-';
-      const lowest = monthlyTotals.find((m) => m.amount === minVal)?.month || '-';
+      const highest = trendWithBudget.find((m) => m.totalAmount === maxVal)?.monthName || '-';
+      const lowest = trendWithBudget.find((m) => m.totalAmount === minVal)?.monthName || '-';
 
       setChartData(formattedChartData);
       setSummary({
         total,
         average: avg,
-        highestMonth: highest,
-        lowestMonth: lowest,
+        highestMonth: highest !== '-' ? highest : '-',
+        lowestMonth: lowest !== '-' ? lowest : '-',
       });
     } catch (error) {
       console.error('Failed to query analytics:', error);
@@ -146,13 +168,34 @@ export default function AnalyticsScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [db, selectedCategory, activeProfileId]);
+  }, [db, selectedCategory, activeProfileId, colors.card]);
 
   useFocusEffect(
     useCallback(() => {
       loadAnalyticsData();
     }, [loadAnalyticsData])
   );
+
+  const handleSelectCategory = (cat: string) => {
+    setSelectedCategory(cat);
+    setIsEditingInline(false);
+    setScrubbedMonthKey(null);
+    setScrubbedAmount(null);
+  };
+
+  const handleSaveInlineBudget = async () => {
+    if (!db) return;
+    const parsed = parseFloat(inlineInputVal);
+    if (!isNaN(parsed) && parsed >= 0) {
+      await setCategoryGoal(db, selectedCategory, parsed, activeProfileId);
+      setCategoryBudget(parsed);
+    } else if (inlineInputVal === '' || parsed === 0) {
+      await setCategoryGoal(db, selectedCategory, 0, activeProfileId);
+      setCategoryBudget(0);
+    }
+    setIsEditingInline(false);
+    await loadAnalyticsData();
+  };
 
   const handleOpenMonthDetails = async (monthKey: string) => {
     if (!db) return;
@@ -263,11 +306,7 @@ export default function AnalyticsScreen() {
                     { backgroundColor: isDark ? '#2C2C2E' : '#E5E5EA' },
                     isActive && { backgroundColor: color },
                   ]}
-                  onPress={() => {
-                    setSelectedCategory(cat);
-                    setScrubbedMonthKey(null);
-                    setScrubbedAmount(null);
-                  }}
+                  onPress={() => handleSelectCategory(cat)}
                 >
                   {!isActive && (
                     <View style={[styles.miniDot, { backgroundColor: color }]} />
@@ -286,11 +325,76 @@ export default function AnalyticsScreen() {
             })}
           </ScrollView>
 
+          {/* Inline Budget Quick-Set Banner */}
+          <View style={[styles.budgetBanner, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <View style={styles.budgetBannerLeft}>
+              <View style={[styles.iconCircle, { backgroundColor: colors.tintBackground }]}>
+                <Ionicons name="flag-outline" size={16} color={colors.accent} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.budgetBannerTitle, { color: colors.text }]}>
+                  {selectedCategory === 'All' ? 'Overall Monthly Budget' : `${selectedCategory} Budget`}
+                </Text>
+
+                {isEditingInline ? (
+                  <View style={styles.inlineInputRow}>
+                    <TextInput
+                      style={[
+                        styles.inlineInput,
+                        {
+                          backgroundColor: isDark ? '#2C2C2E' : '#F2F2F7',
+                          color: colors.text,
+                          borderColor: colors.border,
+                        },
+                      ]}
+                      placeholder="e.g. 500"
+                      placeholderTextColor={colors.textSecondary}
+                      keyboardType="numeric"
+                      value={inlineInputVal}
+                      onChangeText={setInlineInputVal}
+                      autoFocus
+                    />
+                    <TouchableOpacity
+                      style={[styles.inlineSaveBtn, { backgroundColor: colors.accent }]}
+                      onPress={handleSaveInlineBudget}
+                    >
+                      <Text style={styles.inlineSaveText}>Save</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.inlineCancelBtn}
+                      onPress={() => setIsEditingInline(false)}
+                    >
+                      <Ionicons name="close" size={16} color={colors.textSecondary} />
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  <Text style={[styles.budgetBannerSub, { color: colors.textSecondary }]}>
+                    {categoryBudget > 0 ? `Limit: €${categoryBudget.toFixed(0)} / month` : 'No budget set for this category'}
+                  </Text>
+                )}
+              </View>
+            </View>
+
+            {!isEditingInline && (
+              <TouchableOpacity
+                style={[styles.quickEditActionBtn, { backgroundColor: isDark ? '#2C2C2E' : '#F2F2F7' }]}
+                onPress={() => {
+                  setInlineInputVal(categoryBudget > 0 ? categoryBudget.toString() : '');
+                  setIsEditingInline(true);
+                }}
+              >
+                <Text style={[styles.quickEditText, { color: colors.accent }]}>
+                  {categoryBudget > 0 ? 'Edit' : 'Set Limit'}
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
+
           {/* 1. Interactive Line Graph Card */}
           <View style={[styles.chartCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
             <View style={styles.chartHeaderRow}>
               <Text style={[styles.chartTitle, { color: colors.text }]}>Spending Velocity</Text>
-              <Text style={[styles.chartHintText, { color: colors.textSecondary }]}>Drag across chart to scrub</Text>
+              <Text style={[styles.chartHintText, { color: colors.textSecondary }]}>Drag to scrub trend</Text>
             </View>
 
             {loading && !refreshing ? (
@@ -298,7 +402,7 @@ export default function AnalyticsScreen() {
             ) : (
               <View style={styles.chartWrapper}>
                 <LineChart
-                  key={selectedCategory}
+                  key={`${selectedCategory}-${categoryBudget}`}
                   data={chartData}
                   maxValue={maxChartValue}
                   noOfSections={3}
@@ -310,8 +414,6 @@ export default function AnalyticsScreen() {
                   endOpacity={0.0}
                   areaChart
                   hideDataPoints={false}
-                  dataPointsColor={activeColor}
-                  dataPointsRadius={4}
                   curved
                   height={140}
                   spacing={24}
@@ -320,6 +422,18 @@ export default function AnalyticsScreen() {
                   xAxisColor={colors.border}
                   yAxisTextStyle={{ color: colors.textSecondary, fontSize: 10 }}
                   xAxisLabelTextStyle={{ color: colors.textSecondary, fontSize: 10 }}
+                  {...(categoryBudget > 0
+                    ? {
+                        showReferenceLine1: true,
+                        referenceLine1Position: categoryBudget,
+                        referenceLine1Config: {
+                          color: '#FF3B30',
+                          thickness: 1.5,
+                          dashWidth: 4,
+                          dashGap: 4,
+                        },
+                      }
+                    : {})}
                   pointerConfig={{
                     pointerStripUptoDataPoint: true,
                     pointerStripColor: activeColor,
@@ -483,6 +597,62 @@ const styles = StyleSheet.create({
   chipTextActive: {
     color: '#FFF',
   },
+
+  budgetBanner: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.03,
+    shadowRadius: 3,
+    elevation: 1,
+  },
+  budgetBannerLeft: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 },
+  iconCircle: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  budgetBannerTitle: { fontSize: 13, fontWeight: '700' },
+  budgetBannerSub: { fontSize: 11, marginTop: 1 },
+
+  inlineInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 6,
+  },
+  inlineInput: {
+    height: 32,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    fontSize: 14,
+    fontWeight: '700',
+    width: 90,
+  },
+  inlineSaveBtn: {
+    paddingHorizontal: 12,
+    height: 32,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  inlineSaveText: { color: '#FFF', fontSize: 12, fontWeight: '700' },
+  inlineCancelBtn: { padding: 4 },
+  quickEditActionBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  quickEditText: { fontSize: 12, fontWeight: '600' },
 
   chartCard: {
     borderRadius: 16,

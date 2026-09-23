@@ -1,261 +1,299 @@
 import { getCategoryColor } from '@/constants/colors';
+import { useTheme } from '@/contexts/ThemeContext';
 import {
-    CategoryGoalWithProgress,
-    getCategoryGoalsWithProgress,
-    setCategoryGoal
+  CategoryGoalWithProgress,
+  getCategoryGoalsWithProgress,
+  setCategoryGoal
 } from '@/db/database';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import React, { useCallback, useState } from 'react';
 import {
-    ActivityIndicator,
-    Modal,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  TouchableWithoutFeedback,
+  View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useProfile } from '../contexts/ProfileContext';
 
 export default function GoalsScreen() {
   const router = useRouter();
   const db = useSQLiteContext();
-  
-  // Current active month (e.g., "2026-09")
-  const currentMonthStr = new Date().toISOString().substring(0, 7);
+  const { colors, isDark } = useTheme();
+  const { activeProfile } = useProfile();
+  const activeProfileId = activeProfile?.id ?? 1;
 
   const [loading, setLoading] = useState(true);
   const [goals, setGoals] = useState<CategoryGoalWithProgress[]>([]);
+  
+  // Modal state for editing a specific category goal
+  const [modalVisible, setModalVisible] = useState(false);
+  const [editingCategory, setEditingCategory] = useState<string>('');
+  const [inputLimit, setInputLimit] = useState<string>('');
 
-  // Modal State for Editing Goal
-  const [editModalVisible, setEditModalVisible] = useState(false);
-  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
-  const [limitInput, setLimitInput] = useState('');
+  // Default to current month key e.g., '2026-09'
+  const currentMonthKey = '2026-09';
 
   const loadGoals = useCallback(async () => {
     if (!db) return;
     try {
       setLoading(true);
-      const items = await getCategoryGoalsWithProgress(db, currentMonthStr);
-      setGoals(items);
+      const data = await getCategoryGoalsWithProgress(db, currentMonthKey, activeProfileId);
+      setGoals(data);
     } catch (err) {
       console.error('Failed to load category goals:', err);
     } finally {
       setLoading(false);
     }
-  }, [db, currentMonthStr]);
+  }, [db, activeProfileId, currentMonthKey]);
 
-  React.useEffect(() => {
-    loadGoals();
-  }, [loadGoals]);
-
-  const handleOpenEdit = (item: CategoryGoalWithProgress) => {
-    setSelectedCategory(item.category);
-    setLimitInput(item.monthlyLimit > 0 ? item.monthlyLimit.toString() : '');
-    setEditModalVisible(true);
-  };
+  useFocusEffect(
+    useCallback(() => {
+      loadGoals();
+    }, [loadGoals])
+  );
 
   const handleSaveGoal = async () => {
-    if (!selectedCategory || !db) return;
-    const numValue = parseFloat(limitInput) || 0;
-    try {
-      await setCategoryGoal(db, selectedCategory, numValue);
-      setEditModalVisible(false);
-      await loadGoals();
-    } catch (err) {
-      console.error('Failed to set goal:', err);
+    if (!db || !editingCategory) return;
+    const parsed = parseFloat(inputLimit);
+    if (!isNaN(parsed) && parsed >= 0) {
+      await setCategoryGoal(db, editingCategory, parsed, activeProfileId);
+    } else if (inputLimit === '' || parsed === 0) {
+      await setCategoryGoal(db, editingCategory, 0, activeProfileId);
     }
-  };
-
-  const getProgressColor = (pct: number, hasLimit: boolean) => {
-    if (!hasLimit) return '#C7C7CC';
-    if (pct >= 100) return '#FF3B30'; // Red - Over Budget
-    if (pct >= 80) return '#FF9500';  // Amber - Warning
-    return '#34C759';                 // Green - Safe
+    setModalVisible(false);
+    setEditingCategory('');
+    setInputLimit('');
+    loadGoals();
   };
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top']}>
-      <View style={styles.header}>
-        <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-          <Ionicons name="chevron-back" size={24} color="#007AFF" />
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]} edges={['top']}>
+      <View style={[styles.headerRow, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
+        <Text style={[styles.headerTitle, { color: colors.text }]}>Category Budget Goals</Text>
+        <TouchableOpacity
+          style={[styles.closeBtn, { backgroundColor: isDark ? '#2C2C2E' : '#F2F2F7' }]}
+          onPress={() => router.back()}
+        >
+          <Ionicons name="close" size={20} color={colors.text} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Monthly Category Goals</Text>
-        <View style={{ width: 32 }} />
       </View>
 
-      <ScrollView contentContainerStyle={styles.content}>
-        <Text style={styles.subtitle}>
-          Set spend limits for your spending categories. Progress reflects your current month's expenses.
+      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+        <Text style={[styles.sectionSubtitle, { color: colors.textSecondary }]}>
+          Manage your monthly spending caps per category. Progress is tracked against current month expenses.
         </Text>
 
         {loading ? (
-          <ActivityIndicator size="small" color="#007AFF" style={{ marginTop: 32 }} />
+          <ActivityIndicator size="small" color={colors.accent} style={{ marginTop: 40 }} />
         ) : goals.length === 0 ? (
-          <View style={styles.emptyCard}>
-            <Text style={styles.emptyText}>No category expenses recorded yet.</Text>
-          </View>
+          <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+            No spending categories found for this profile yet.
+          </Text>
         ) : (
           goals.map((item) => {
             const catColor = getCategoryColor(item.category);
-            const hasLimit = item.monthlyLimit > 0;
-            const progressColor = getProgressColor(item.percentage, hasLimit);
-            const fillWidth = hasLimit ? `${Math.min(item.percentage, 100)}%` : '0%';
+            const isOver = item.monthlyLimit > 0 && item.spent > item.monthlyLimit;
 
             return (
               <TouchableOpacity
                 key={item.category}
-                style={styles.goalCard}
+                style={[styles.goalCard, { backgroundColor: colors.card, borderColor: colors.border }]}
                 activeOpacity={0.8}
-                onPress={() => handleOpenEdit(item)}
+                onPress={() => {
+                  setEditingCategory(item.category);
+                  setInputLimit(item.monthlyLimit > 0 ? item.monthlyLimit.toString() : '');
+                  setModalVisible(true);
+                }}
               >
-                <View style={styles.cardHeader}>
-                  <View style={styles.categoryBadge}>
-                    <View style={[styles.colorDot, { backgroundColor: catColor }]} />
-                    <Text style={styles.categoryName}>{item.category}</Text>
+                <View style={styles.goalCardHeader}>
+                  <View style={styles.goalLeft}>
+                    <View style={[styles.dot, { backgroundColor: catColor }]} />
+                    <Text style={[styles.categoryName, { color: colors.text }]}>{item.category}</Text>
                   </View>
-                  <Text style={styles.limitText}>
-                    {hasLimit ? `Limit: €${item.monthlyLimit.toFixed(0)}` : 'Set Limit'}
-                  </Text>
+                  <View style={styles.goalRight}>
+                    <Text style={[styles.spentText, { color: colors.text }]}>
+                      €{item.spent.toFixed(0)}{' '}
+                      <Text style={{ color: colors.textSecondary, fontWeight: '400' }}>
+                        / {item.monthlyLimit > 0 ? `€${item.monthlyLimit.toFixed(0)}` : 'No limit'}
+                      </Text>
+                    </Text>
+                    <Ionicons name="chevron-forward" size={14} color={colors.textSecondary} />
+                  </View>
                 </View>
 
-                {/* Progress Bar Track */}
-                <View style={styles.progressTrack}>
-                  <View
-                    style={[
-                      styles.progressFill,
-                      { width: fillWidth as any, backgroundColor: progressColor },
-                    ]}
-                  />
-                </View>
-
-                <View style={styles.cardFooter}>
-                  <Text style={styles.spentText}>
-                    Spent: €{item.spent.toFixed(2)}
-                  </Text>
-                  <Text style={[styles.pctText, { color: progressColor }]}>
-                    {hasLimit ? `${item.percentage}%` : 'No Limit'}
-                  </Text>
-                </View>
+                {/* Progress bar */}
+                {item.monthlyLimit > 0 && (
+                  <View style={[styles.progressTrack, { backgroundColor: isDark ? '#38383A' : '#E5E5EA' }]}>
+                    <View
+                      style={[
+                        styles.progressBar,
+                        {
+                          width: `${Math.min(100, item.percentage)}%`,
+                          backgroundColor: isOver ? '#FF3B30' : catColor,
+                        },
+                      ]}
+                    />
+                  </View>
+                )}
               </TouchableOpacity>
             );
           })
         )}
       </ScrollView>
 
-      {/* Edit Budget Goal Modal */}
-      <Modal visible={editModalVisible} transparent animationType="fade">
-        <TouchableOpacity
+      {/* Edit Goal Modal with KeyboardAvoidingView */}
+      <Modal visible={modalVisible} transparent animationType="slide">
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           style={styles.modalOverlay}
-          activeOpacity={1}
-          onPress={() => setEditModalVisible(false)}
         >
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>
-              Set Limit: {selectedCategory}
-            </Text>
-            <Text style={styles.modalSub}>Enter maximum monthly spending limit in Euros (€):</Text>
-
-            <View style={styles.inputContainer}>
-              <Text style={styles.currencyPrefix}>€</Text>
-              <TextInput
-                style={styles.input}
-                keyboardType="numeric"
-                placeholder="0"
-                placeholderTextColor="#C7C7CC"
-                value={limitInput}
-                onChangeText={setLimitInput}
-                autoFocus
-              />
-            </View>
-
-            <View style={styles.modalActions}>
-              <TouchableOpacity
-                style={[styles.modalBtn, styles.cancelBtn]}
-                onPress={() => setEditModalVisible(false)}
-              >
-                <Text style={styles.cancelBtnText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.modalBtn, styles.saveBtn]}
-                onPress={handleSaveGoal}
-              >
-                <Text style={styles.saveBtnText}>Save Limit</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </TouchableOpacity>
+          <TouchableOpacity
+            style={{ flex: 1, justifyContent: 'flex-end' }}
+            activeOpacity={1}
+            onPress={() => setModalVisible(false)}
+          >
+            <TouchableWithoutFeedback>
+              <View style={[styles.sheetContainer, { backgroundColor: colors.card }]}>
+                <View style={styles.sheetHeader}>
+                  <View style={[styles.sheetHandle, { backgroundColor: colors.border }]} />
+                  <Text style={[styles.sheetTitle, { color: colors.text }]}>
+                    Budget for {editingCategory}
+                  </Text>
+                </View>
+                <TextInput
+                  style={[
+                    styles.budgetInput,
+                    {
+                      backgroundColor: isDark ? '#2C2C2E' : '#F2F2F7',
+                      color: colors.text,
+                      borderColor: colors.border,
+                    },
+                  ]}
+                  placeholder="e.g. 400"
+                  placeholderTextColor={colors.textSecondary}
+                  keyboardType="numeric"
+                  value={inputLimit}
+                  onChangeText={setInputLimit}
+                  autoFocus
+                />
+                <View style={styles.modalActionRow}>
+                  <TouchableOpacity
+                    style={[styles.modalCancelBtn, { backgroundColor: isDark ? '#38383A' : '#E5E5EA' }]}
+                    onPress={() => setModalVisible(false)}
+                  >
+                    <Text style={[styles.modalCancelText, { color: colors.text }]}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.modalSaveBtn, { backgroundColor: colors.accent }]}
+                    onPress={handleSaveGoal}
+                  >
+                    <Text style={styles.modalSaveText}>Save Goal</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </TouchableWithoutFeedback>
+          </TouchableOpacity>
+        </KeyboardAvoidingView>
       </Modal>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: '#F2F2F7' },
-  header: {
+  safeArea: { flex: 1 },
+  headerRow: {
     flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: '#FFF',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 14,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#E5E5EA',
   },
-  backButton: { padding: 4 },
-  headerTitle: { fontSize: 17, fontWeight: '700', color: '#1C1C1E' },
-  content: { padding: 16, paddingBottom: 40 },
-  subtitle: { fontSize: 13, color: '#8E8E93', marginBottom: 16, lineHeight: 18 },
-  emptyCard: { backgroundColor: '#FFF', borderRadius: 16, padding: 24, alignItems: 'center' },
-  emptyText: { fontSize: 14, color: '#8E8E93' },
-
+  headerTitle: { fontSize: 20, fontWeight: '700' },
+  closeBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  container: { flex: 1 },
+  content: { padding: 20, paddingBottom: 40 },
+  sectionSubtitle: { fontSize: 13, marginBottom: 16, lineHeight: 18 },
+  emptyText: { textAlign: 'center', fontStyle: 'italic', marginTop: 40 },
   goalCard: {
-    backgroundColor: '#FFF',
     borderRadius: 16,
     padding: 16,
     marginBottom: 12,
+    borderWidth: StyleSheet.hairlineWidth,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.03,
-    shadowRadius: 4,
+    shadowRadius: 3,
     elevation: 1,
   },
-  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
-  categoryBadge: { flexDirection: 'row', alignItems: 'center' },
-  colorDot: { width: 10, height: 10, borderRadius: 5, marginRight: 8 },
-  categoryName: { fontSize: 15, fontWeight: '600', color: '#1C1C1E' },
-  limitText: { fontSize: 13, fontWeight: '600', color: '#007AFF' },
-
-  progressTrack: { height: 8, backgroundColor: '#E5E5EA', borderRadius: 4, overflow: 'hidden', marginBottom: 8 },
-  progressFill: { height: '100%', borderRadius: 4 },
-
-  cardFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  spentText: { fontSize: 12, color: '#8E8E93', fontWeight: '500' },
-  pctText: { fontSize: 12, fontWeight: '700' },
-
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', padding: 24 },
-  modalContent: { backgroundColor: '#FFF', borderRadius: 20, padding: 20, alignItems: 'center' },
-  modalTitle: { fontSize: 17, fontWeight: '700', color: '#1C1C1E', marginBottom: 4 },
-  modalSub: { fontSize: 12, color: '#8E8E93', textAlign: 'center', marginBottom: 16 },
-  inputContainer: {
+  goalCardHeader: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: '#F2F2F7',
+  },
+  goalLeft: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 },
+  dot: { width: 10, height: 10, borderRadius: 5 },
+  categoryName: { fontSize: 15, fontWeight: '600' },
+  goalRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  spentText: { fontSize: 14, fontWeight: '700' },
+  progressTrack: {
+    height: 6,
+    borderRadius: 3,
+    marginTop: 12,
+    overflow: 'hidden',
+  },
+  progressBar: { height: '100%', borderRadius: 3 },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
+  sheetContainer: {
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingHorizontal: 20,
+    paddingBottom: 36,
+    paddingTop: 12,
+  },
+  sheetHeader: { alignItems: 'center', marginBottom: 16 },
+  sheetHandle: { width: 36, height: 4, borderRadius: 2, marginBottom: 12 },
+  sheetTitle: { fontSize: 17, fontWeight: '700' },
+  budgetInput: {
+    height: 48,
+    borderWidth: StyleSheet.hairlineWidth,
     borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    width: '100%',
+    paddingHorizontal: 14,
+    fontSize: 18,
+    fontWeight: '700',
     marginBottom: 20,
   },
-  currencyPrefix: { fontSize: 18, fontWeight: '700', color: '#1C1C1E', marginRight: 8 },
-  input: { flex: 1, fontSize: 18, fontWeight: '600', color: '#1C1C1E' },
-  modalActions: { flexDirection: 'row', gap: 12, width: '100%' },
-  modalBtn: { flex: 1, paddingVertical: 12, borderRadius: 12, alignItems: 'center' },
-  cancelBtn: { backgroundColor: '#F2F2F7' },
-  cancelBtnText: { fontSize: 15, fontWeight: '600', color: '#8E8E93' },
-  saveBtn: { backgroundColor: '#007AFF' },
-  saveBtnText: { fontSize: 15, fontWeight: '700', color: '#FFF' },
+  modalActionRow: { flexDirection: 'row', gap: 10 },
+  modalCancelBtn: {
+    flex: 1,
+    height: 46,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalCancelText: { fontSize: 15, fontWeight: '600' },
+  modalSaveBtn: {
+    flex: 1,
+    height: 46,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalSaveText: { fontSize: 15, fontWeight: '700', color: '#FFF' },
 });

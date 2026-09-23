@@ -955,3 +955,65 @@ export async function getRecurringCandidates(
   );
   return candidates || [];
 }
+
+export interface AnnualTrendPointWithBudget {
+  monthName: string;
+  totalAmount: number;
+  budgetLimit: number;
+}
+
+export async function getCategoryGoal(
+  db: SQLiteDatabase,
+  category: string,
+  profileId: number = 1
+): Promise<number> {
+  const result = await db.getFirstAsync<{ monthly_limit: number }>(
+    `SELECT monthly_limit FROM category_goals WHERE category = ? AND profileId = ?;`,
+    [category, profileId]
+  );
+  return result?.monthly_limit ?? 0;
+}
+
+export async function getAnnualTrendWithBudget(
+  db: SQLiteDatabase,
+  year: string = '2026',
+  category: string = 'All',
+  profileId: number = 1
+): Promise<AnnualTrendPointWithBudget[]> {
+  const yearlyData = await getFullYearTrendData(db, year, profileId);
+  
+  // Build a map of actual monthly expenses depending on category filter
+  let query = `
+    SELECT monthName, TOTAL(ABS(amount)) as totalAmount
+    FROM transactions
+    WHERE monthName LIKE ? AND profileId = ? AND amount < 0
+  `;
+  const params: (string | number)[] = [`${year}-%`, profileId];
+
+  if (category && category !== 'All') {
+    query += ` AND category = ?`;
+    params.push(category);
+  }
+
+  query += ` GROUP BY monthName ORDER BY monthName ASC;`;
+  const rows = await db.getAllAsync<{ monthName: string; totalAmount: number }>(query, params);
+
+  const spendingMap: Record<string, number> = {};
+  rows.forEach((r) => {
+    spendingMap[r.monthName] = r.totalAmount;
+  });
+
+  const budgetLimit = await getCategoryGoal(db, category, profileId);
+
+  const months = [
+    '2026-01', '2026-02', '2026-03', '2026-04',
+    '2026-05', '2026-06', '2026-07', '2026-08',
+    '2026-09', '2026-10', '2026-11', '2026-12'
+  ];
+
+  return months.map((m) => ({
+    monthName: m,
+    totalAmount: spendingMap[m] || 0,
+    budgetLimit: budgetLimit,
+  }));
+}

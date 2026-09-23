@@ -48,18 +48,15 @@ export function SummaryCards({
       </View>
 
       <View style={[styles.netCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-        <View>
-          <Text style={[styles.label, { color: colors.textSecondary }]}>NET CASH FLOW</Text>
-          <Text
-            style={[
-              styles.netAmount,
-              { color: summary.netSavings >= 0 ? '#34C759' : '#FF3B30' },
-            ]}
-          >
-            €{summary.netSavings.toFixed(2)}
-          </Text>
-        </View>
-
+        <Text style={[styles.netCardLabel, { color: colors.textSecondary }]}>NET CASH FLOW</Text>
+        <Text
+          style={[
+            styles.netAmountHorizontal,
+            { color: summary.netSavings >= 0 ? '#34C759' : '#FF3B30' },
+          ]}
+        >
+          €{summary.netSavings.toFixed(2)}
+        </Text>
       </View>
     </View>
   );
@@ -80,8 +77,9 @@ const styles = StyleSheet.create({
     elevation: 1,
   },
   netCard: {
-    borderRadius: 16,
-    padding: 16,
+    borderRadius: 16.5,
+    paddingHorizontal: 16,
+    paddingVertical: 18,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
@@ -94,7 +92,6 @@ const styles = StyleSheet.create({
   },
   label: { fontSize: 12, fontWeight: '600', marginBottom: 4, letterSpacing: 0.3 },
   amount: { fontSize: 20, fontWeight: '700' },
-  netAmount: { fontSize: 22, fontWeight: '700', marginTop: 2 },
-  statsMeta: { alignItems: 'flex-end', justifyContent: 'center' },
-  metaText: { fontSize: 11, fontWeight: '500' },
+  netCardLabel: { fontSize: 13, fontWeight: '700', letterSpacing: 0.5 },
+  netAmountHorizontal: { fontSize: 20, fontWeight: '700' },
 });
