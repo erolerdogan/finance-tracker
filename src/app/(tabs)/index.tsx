@@ -5,7 +5,6 @@ import { SummaryCards } from '@/components/dashboard/SummaryCards';
 import { TransactionDetailModal } from '@/components/modals/TransactionDetailModal';
 import { TransactionListModal } from '@/components/modals/TransactionListModal';
 import { ProfileSwitcherModal } from '@/components/ProfileSwitcherModal';
-import { getCategoryColor } from '@/constants/colors';
 import {
   CategoryTotal,
   clearAllTransactions,
@@ -103,7 +102,6 @@ export default function DashboardScreen() {
   // Filters & State
   const [availableMonths, setAvailableMonths] = useState<string[]>([]);
   const [selectedMonth, setSelectedMonth] = useState<string>('');
-  const [typeFilter, setTypeFilter] = useState<'ALL' | 'INCOME' | 'EXPENSE'>('ALL');
   const [coverageStatus, setCoverageStatus] = useState<MonthCoverageStatus>({
     status: 'EMPTY',
     label: '',
@@ -123,11 +121,10 @@ export default function DashboardScreen() {
     fixedItemsCount: 0,
   });
   const [categoryData, setCategoryData] = useState<CategoryTotal[]>([]);
-  const [expandedCategories, setExpandedCategories] = useState<Record<string, boolean>>({});
   const [selectedBarCategory, setSelectedBarCategory] = useState<string | null>(null);
 
-  const [categoryTransactionsMap, setCategoryTransactionsMap] = useState<Record<string, Transaction[]>>({});
-  const [loadingTransactionsMap, setLoadingTransactionsMap] = useState<Record<string, boolean>>({});
+  const [selectedCategoryTransactions, setSelectedCategoryTransactions] = useState<Transaction[]>([]);
+  const [loadingTransactions, setLoadingTransactions] = useState(false);
 
   const currentMonthKey = getCurrentMonthKey();
 
@@ -220,22 +217,17 @@ export default function DashboardScreen() {
   const handlePrevMonth = () => {
     if (currentIndex < availableMonths.length - 1) {
       setSelectedMonth(availableMonths[currentIndex + 1]);
-      resetSelectionStates();
+      setSelectedBarCategory(null);
+      setSelectedCategoryTransactions([]);
     }
   };
 
   const handleNextMonth = () => {
     if (currentIndex > 0) {
       setSelectedMonth(availableMonths[currentIndex - 1]);
-      resetSelectionStates();
+      setSelectedBarCategory(null);
+      setSelectedCategoryTransactions([]);
     }
-  };
-
-  const resetSelectionStates = () => {
-    setSelectedBarCategory(null);
-    setExpandedCategories({});
-    setTypeFilter('ALL');
-    setCategoryTransactionsMap({});
   };
 
   const handleSelectTransaction = async (trx: Transaction) => {
@@ -272,19 +264,9 @@ export default function DashboardScreen() {
         activeProfileId
       );
 
-      setCategoryTransactionsMap({});
-
-      if (listModalVisible) {
-        if (listModalType === 'FIXED' || listModalType === 'FLEXIBLE') {
-          const isFixedTarget = listModalType === 'FIXED';
-          const updatedItems = await getFixedOrFlexibleTransactions(
-            db,
-            selectedMonth,
-            isFixedTarget,
-            activeProfileId
-          );
-          setListModalTransactions(updatedItems);
-        }
+      if (selectedBarCategory) {
+        const updatedItems = await getTransactionsByMonthAndCategory(db, selectedMonth, selectedBarCategory, activeProfileId);
+        setSelectedCategoryTransactions(updatedItems || []);
       }
 
       await loadDashboardData();
@@ -320,35 +302,23 @@ export default function DashboardScreen() {
     }
   };
 
-  const fetchCategoryTransactions = async (catName: string) => {
-    if (categoryTransactionsMap[catName] || !db) return;
-    try {
-      setLoadingTransactionsMap((prev) => ({ ...prev, [catName]: true }));
-      const items = await getTransactionsByMonthAndCategory(db, selectedMonth, catName, activeProfileId);
-      setCategoryTransactionsMap((prev) => ({ ...prev, [catName]: items || [] }));
-    } catch (error) {
-      console.error(`Failed to load transactions for ${catName}:`, error);
-    } finally {
-      setLoadingTransactionsMap((prev) => ({ ...prev, [catName]: false }));
-    }
-  };
-
-  const toggleCategoryExpand = async (catName: string) => {
-    const isCurrentlyExpanded = !!expandedCategories[catName];
-    setExpandedCategories((prev) => ({ ...prev, [catName]: !isCurrentlyExpanded }));
-    if (!isCurrentlyExpanded) {
-      await fetchCategoryTransactions(catName);
-    }
-  };
-
-  const handleBarPress = (categoryName: string) => {
+  const handleBarPress = async (categoryName: string) => {
     if (selectedBarCategory === categoryName) {
       setSelectedBarCategory(null);
-      setExpandedCategories({});
+      setSelectedCategoryTransactions([]);
     } else {
       setSelectedBarCategory(categoryName);
-      setExpandedCategories({ [categoryName]: true });
-      fetchCategoryTransactions(categoryName);
+      if (db) {
+        try {
+          setLoadingTransactions(true);
+          const items = await getTransactionsByMonthAndCategory(db, selectedMonth, categoryName, activeProfileId);
+          setSelectedCategoryTransactions(items || []);
+        } catch (error) {
+          console.error(`Failed to load transactions for ${categoryName}:`, error);
+        } finally {
+          setLoadingTransactions(false);
+        }
+      }
     }
   };
 
@@ -446,8 +416,6 @@ export default function DashboardScreen() {
             } catch (error) {
               console.error('Failed to reset DB:', error);
               Alert.alert('Error', 'Failed to reset the database.');
-            } finally {
-              setLoading(false);
             }
           },
         },
@@ -455,13 +423,7 @@ export default function DashboardScreen() {
     );
   };
 
-  const grandTotal = summary.totalExpenses;
   const totalTransactions = categoryData.reduce((a, b) => a + (b.count || 0), 0);
-
-  const displayedCategories = categoryData.filter((c) => {
-    if (selectedBarCategory && c.category !== selectedBarCategory) return false;
-    return true;
-  });
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
@@ -474,8 +436,6 @@ export default function DashboardScreen() {
           {/* Header Bar */}
           <View style={styles.headerRow}>
             <View style={styles.headerLeftGroup}>
-              <Text style={styles.title}>Dashboard</Text>
-
               {activeProfile && (
                 <TouchableOpacity
                   style={[styles.profilePill, { backgroundColor: activeProfile.avatarColor }]}
@@ -516,130 +476,61 @@ export default function DashboardScreen() {
             onOpenCardModal={handleOpenCardModal}
           />
 
-          {/* Fixed vs Flexible Board (Moved Above Spending Allocation) */}
+          {/* Interactive Spending Allocation Pie Chart with Inline Item Breakdown */}
+          <AllocationChart
+            categoryData={categoryData}
+            selectedBarCategory={selectedBarCategory}
+            selectedCategoryTransactions={selectedCategoryTransactions}
+            loadingTransactions={loadingTransactions}
+            onBarPress={handleBarPress}
+            onSelectTransaction={handleSelectTransaction}
+          />
+
+          {/* Inline Transaction Drill-down when a Category is selected */}
+          {selectedBarCategory && (
+            <View style={styles.drilldownCard}>
+              <View style={styles.drilldownHeader}>
+                <Text style={styles.drilldownTitle}>{selectedBarCategory} Items</Text>
+                <TouchableOpacity onPress={() => setSelectedBarCategory(null)}>
+                  <Ionicons name="close-circle" size={20} color="#8E8E93" />
+                </TouchableOpacity>
+              </View>
+
+              {loadingTransactions ? (
+                <ActivityIndicator size="small" color="#007AFF" style={{ paddingVertical: 12 }} />
+              ) : selectedCategoryTransactions.length === 0 ? (
+                <Text style={styles.noTrxText}>No recorded items for this category.</Text>
+              ) : (
+                selectedCategoryTransactions.map((trx) => (
+                  <TouchableOpacity
+                    key={trx.id}
+                    style={styles.trxRow}
+                    activeOpacity={0.7}
+                    onPress={() => handleSelectTransaction(trx)}
+                  >
+                    <View style={styles.trxLeft}>
+                      <Ionicons name="receipt-outline" size={14} color="#8E8E93" style={{ marginRight: 8 }} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.trxDesc} numberOfLines={1}>
+                          {trx.merchant !== 'Unknown' ? trx.merchant : trx.rawDescription}
+                        </Text>
+                        <Text style={styles.trxDate}>{trx.date}</Text>
+                      </View>
+                    </View>
+                    <Text style={[styles.trxAmount, { color: trx.amount < 0 ? '#1C1C1E' : '#34C759' }]}>
+                      {trx.amount < 0 ? `-€${Math.abs(trx.amount).toFixed(2)}` : `+€${trx.amount.toFixed(2)}`}
+                    </Text>
+                  </TouchableOpacity>
+                ))
+              )}
+            </View>
+          )}
+
+          {/* Fixed vs Flexible Board */}
           <FixedFlexibleCard
             summary={fixedSummary}
             onPress={() => handleOpenCardModal('EXPENSE')}
           />
-
-          {/* Allocation Bar Chart */}
-          <AllocationChart
-            categoryData={categoryData}
-            selectedBarCategory={selectedBarCategory}
-            onBarPress={handleBarPress}
-          />
-
-          {/* Category Breakdown */}
-          <View style={styles.sectionHeaderRow}>
-            <Text style={styles.sectionTitle}>
-              Categories {selectedBarCategory ? `(${selectedBarCategory})` : ''}
-            </Text>
-          </View>
-
-          {loading && !refreshing ? (
-            <ActivityIndicator size="small" color="#007AFF" style={{ marginTop: 24 }} />
-          ) : displayedCategories.length === 0 ? (
-            <View style={styles.pendingCard}>
-              <View style={styles.pendingIconCircle}>
-                <Ionicons name="document-text-outline" size={26} color="#007AFF" />
-              </View>
-              <Text style={styles.pendingTitle}>
-                {MONTH_NAMES[selectedMonth] || selectedMonth} Statement Pending
-              </Text>
-              <Text style={styles.pendingSubtext}>
-                No transactions uploaded for this month yet. Import a CSV or Excel statement to populate your overview.
-              </Text>
-              <TouchableOpacity
-                style={styles.pendingImportBtn}
-                activeOpacity={0.8}
-                onPress={handleImportFile}
-              >
-                <Ionicons name="cloud-upload-outline" size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
-                <Text style={styles.pendingImportBtnText}>Import Statement</Text>
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <View style={styles.categoryCardList}>
-              {displayedCategories.map((item, index) => {
-                const percentOfTotal = grandTotal > 0 ? Math.round((item.totalAmount / grandTotal) * 100) : 0;
-                const catColor = getCategoryColor(item.category);
-                const isLast = index === displayedCategories.length - 1;
-                const isExpanded = !!expandedCategories[item.category];
-
-                const rawTrxList = categoryTransactionsMap[item.category] || [];
-                const filteredTrxList = rawTrxList.filter((trx) => {
-                  if (typeFilter === 'INCOME') return trx.amount > 0;
-                  if (typeFilter === 'EXPENSE') return trx.amount < 0;
-                  return true;
-                });
-
-                const isTrxLoading = !!loadingTransactionsMap[item.category];
-
-                return (
-                  <View key={item.category} style={[!isLast && styles.categoryRowBorder]}>
-                    <TouchableOpacity
-                      activeOpacity={0.7}
-                      style={styles.categoryRow}
-                      onPress={() => toggleCategoryExpand(item.category)}
-                    >
-                      <View style={styles.categoryLeft}>
-                        <View style={[styles.colorDot, { backgroundColor: catColor }]} />
-                        <View>
-                          <Text style={styles.categoryName}>{item.category}</Text>
-                          <Text style={styles.categoryMeta}>{item.count} transactions</Text>
-                        </View>
-                      </View>
-
-                      <View style={styles.categoryRight}>
-                        <Text style={styles.categoryAmount}>€{item.totalAmount.toFixed(2)}</Text>
-                        <View style={styles.percentGroup}>
-                          <Text style={styles.categoryPercent}>{percentOfTotal}%</Text>
-                          <Ionicons
-                            name={isExpanded ? 'chevron-up' : 'chevron-down'}
-                            size={14}
-                            color="#8E8E93"
-                            style={{ marginLeft: 4 }}
-                          />
-                        </View>
-                      </View>
-                    </TouchableOpacity>
-
-                    {isExpanded && (
-                      <View style={styles.transactionsContainer}>
-                        {isTrxLoading ? (
-                          <ActivityIndicator size="small" color="#007AFF" style={{ marginVertical: 8 }} />
-                        ) : filteredTrxList.length === 0 ? (
-                          <Text style={styles.noTransactionsText}>No matching transactions recorded.</Text>
-                        ) : (
-                          filteredTrxList.map((trx) => (
-                            <TouchableOpacity
-                              key={trx.id}
-                              style={styles.trxRow}
-                              activeOpacity={0.7}
-                              onPress={() => handleSelectTransaction(trx)}
-                            >
-                              <View style={styles.trxLeft}>
-                                <Ionicons name="receipt-outline" size={13} color="#8E8E93" style={{ marginRight: 8 }} />
-                                <View style={{ flex: 1 }}>
-                                  <Text style={styles.trxDesc} numberOfLines={1}>
-                                    {trx.merchant !== 'Unknown' ? trx.merchant : trx.rawDescription}
-                                  </Text>
-                                  <Text style={styles.trxDate}>{trx.date}</Text>
-                                </View>
-                              </View>
-                              <Text style={[styles.trxAmount, { color: trx.amount < 0 ? '#1C1C1E' : '#34C759' }]}>
-                                {trx.amount < 0 ? `-€${Math.abs(trx.amount).toFixed(2)}` : `+€${trx.amount.toFixed(2)}`}
-                              </Text>
-                            </TouchableOpacity>
-                          ))
-                        )}
-                      </View>
-                    )}
-                  </View>
-                );
-              })}
-            </View>
-          )}
         </ScrollView>
 
         <TouchableOpacity
@@ -727,7 +618,8 @@ export default function DashboardScreen() {
                         style={[styles.sheetItem, isSelected && styles.sheetItemActive]}
                         onPress={() => {
                           setSelectedMonth(m);
-                          resetSelectionStates();
+                          setSelectedBarCategory(null);
+                          setSelectedCategoryTransactions([]);
                           setMonthPickerVisible(false);
                         }}
                       >
@@ -764,7 +656,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 10,
   },
-  title: { fontSize: 28, fontWeight: '700', color: '#000', letterSpacing: -0.5 },
   profilePill: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -787,28 +678,38 @@ const styles = StyleSheet.create({
   },
   goalsHeaderText: { fontSize: 13, fontWeight: '600', color: '#007AFF' },
 
-  sectionHeaderRow: { marginBottom: 10, marginTop: 12 },
-  sectionTitle: { fontSize: 16, fontWeight: '600', color: '#1C1C1E' },
-  categoryCardList: {
+  drilldownCard: {
     backgroundColor: '#FFF',
     borderRadius: 16,
-    paddingHorizontal: 16,
+    padding: 16,
+    marginBottom: 16,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.03,
     shadowRadius: 4,
     elevation: 1,
   },
-  categoryRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12 },
-  categoryRowBorder: { borderBottomWidth: 1, borderBottomColor: '#F2F2F7' },
-  categoryLeft: { flexDirection: 'row', alignItems: 'center', flex: 1 },
-  colorDot: { width: 10, height: 10, borderRadius: 5, marginRight: 12 },
-  categoryName: { fontSize: 14, fontWeight: '600', color: '#1C1C1E' },
-  categoryMeta: { fontSize: 11, color: '#8E8E93', marginTop: 1 },
-  categoryRight: { alignItems: 'flex-end' },
-  categoryAmount: { fontSize: 14, fontWeight: '600', color: '#1C1C1E' },
-  percentGroup: { flexDirection: 'row', alignItems: 'center', marginTop: 1 },
-  categoryPercent: { fontSize: 11, color: '#8E8E93' },
+  drilldownHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  drilldownTitle: { fontSize: 14, fontWeight: '700', color: '#1C1C1E' },
+  noTrxText: { fontSize: 12, color: '#8E8E93', fontStyle: 'italic', paddingVertical: 8 },
+
+  trxRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#E5E5EA',
+  },
+  trxLeft: { flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 8 },
+  trxDesc: { fontSize: 13, fontWeight: '500', color: '#1C1C1E' },
+  trxDate: { fontSize: 10, color: '#8E8E93', marginTop: 1 },
+  trxAmount: { fontSize: 13, fontWeight: '600' },
 
   fabButton: {
     position: 'absolute',
@@ -825,76 +726,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3,
     shadowRadius: 8,
     elevation: 5,
-  },
-
-  transactionsContainer: {
-    backgroundColor: '#FAF9F9',
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    marginBottom: 10,
-  },
-  trxRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 8,
-    borderBottomWidth: 0.5,
-    borderBottomColor: '#E5E5EA',
-  },
-  trxLeft: { flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 8 },
-  trxDesc: { fontSize: 13, fontWeight: '500', color: '#1C1C1E' },
-  trxDate: { fontSize: 10, color: '#8E8E93', marginTop: 1 },
-  trxAmount: { fontSize: 13, fontWeight: '600' },
-  noTransactionsText: { fontSize: 12, color: '#8E8E93', fontStyle: 'italic', paddingVertical: 4 },
-
-  pendingCard: {
-    backgroundColor: '#FFF',
-    borderRadius: 18,
-    padding: 24,
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 6,
-    elevation: 2,
-  },
-  pendingIconCircle: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    backgroundColor: '#E6F0FF',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  pendingTitle: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: '#1C1C1E',
-    marginBottom: 6,
-    textAlign: 'center',
-  },
-  pendingSubtext: {
-    fontSize: 13,
-    color: '#8E8E93',
-    textAlign: 'center',
-    lineHeight: 18,
-    marginBottom: 18,
-    paddingHorizontal: 8,
-  },
-  pendingImportBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#007AFF',
-    paddingHorizontal: 18,
-    paddingVertical: 12,
-    borderRadius: 12,
-  },
-  pendingImportBtnText: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#FFFFFF',
   },
 
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
