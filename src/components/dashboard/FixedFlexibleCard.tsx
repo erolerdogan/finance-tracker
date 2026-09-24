@@ -5,7 +5,7 @@ import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 interface FixedFlexibleCardProps {
   summary: FixedCostSummary;
-  onPress: () => void;
+  onPress?: () => void;
 }
 
 export function FixedFlexibleCard({ summary, onPress }: FixedFlexibleCardProps) {
@@ -15,14 +15,15 @@ export function FixedFlexibleCard({ summary, onPress }: FixedFlexibleCardProps) 
   const displayFixedPct = Math.round(fixedPercentage);
   const displayFlexiblePct = Math.round(flexiblePercentage);
 
+  const CardWrapper = onPress ? TouchableOpacity : View;
+
   return (
-    <TouchableOpacity
+    <CardWrapper
       style={[
         styles.cardContainer,
         { backgroundColor: colors.card, borderColor: colors.border },
       ]}
-      activeOpacity={0.8}
-      onPress={onPress}
+      {...(onPress ? { activeOpacity: 0.8, onPress } : {})}
     >
       {/* Header */}
       <View style={styles.cardHeader}>
@@ -87,7 +88,7 @@ export function FixedFlexibleCard({ summary, onPress }: FixedFlexibleCardProps) 
           </Text>
         </View>
       </View>
-    </TouchableOpacity>
+    </CardWrapper>
   );
 }
 

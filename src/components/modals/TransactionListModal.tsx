@@ -1,6 +1,7 @@
+import { FixedFlexibleCard } from '@/components/dashboard/FixedFlexibleCard';
 import { getCategoryColor } from '@/constants/colors';
 import { useTheme } from '@/contexts/ThemeContext';
-import { Transaction } from '@/db/database';
+import { FixedCostSummary, Transaction } from '@/db/database';
 import { Ionicons } from '@expo/vector-icons';
 import React, { useEffect, useState } from 'react';
 import {
@@ -26,6 +27,7 @@ interface TransactionListModalProps {
   monthNames: Record<string, string>;
   transactions: Transaction[];
   loading: boolean;
+  fixedSummary?: FixedCostSummary;
   onClose: () => void;
   onSelectTransaction: (trx: Transaction) => void;
   profileId?: number;
@@ -38,6 +40,7 @@ export function TransactionListModal({
   monthNames,
   transactions,
   loading,
+  fixedSummary,
   onClose,
   onSelectTransaction,
 }: TransactionListModalProps) {
@@ -111,172 +114,181 @@ export function TransactionListModal({
               </View>
             </View>
 
-            {/* Search Input Bar */}
-            <View
-              style={[
-                styles.searchBarContainer,
-                {
-                  backgroundColor: isDark ? '#2C2C2E' : '#F2F2F7',
-                  borderColor: colors.border,
-                },
-              ]}
+            <ScrollView
+              style={styles.mainScrollView}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
             >
-              <Ionicons name="search" size={16} color={colors.textSecondary} style={styles.searchIcon} />
-              <TextInput
-                style={[styles.searchInput, { color: colors.text }]}
-                placeholder="Search merchant, description..."
-                placeholderTextColor={colors.textSecondary}
-                value={searchQuery}
-                onChangeText={setSearchQuery}
-                clearButtonMode="while-editing"
-                autoCorrect={false}
-              />
-              {searchQuery.length > 0 && (
-                <TouchableOpacity onPress={() => setSearchQuery('')} style={styles.clearBtn}>
-                  <Ionicons name="close-circle" size={16} color={colors.textSecondary} />
-                </TouchableOpacity>
+              {/* Fixed & Flexible Summary Card inside Total Expenses Sheet */}
+              {isExpenseModal && fixedSummary && (
+                <View style={styles.summaryCardWrapper}>
+                  <FixedFlexibleCard summary={fixedSummary} />
+                </View>
               )}
-            </View>
 
-            {/* 3-Option Segmented Filter */}
-            {isExpenseModal && (
-              <View style={[styles.segmentedContainer, { backgroundColor: isDark ? '#2C2C2E' : '#E5E5EA' }]}>
-                <TouchableOpacity
-                  style={[
-                    styles.segmentBtn,
-                    filterMode === 'ALL' && [styles.segmentBtnActive, { backgroundColor: isDark ? '#3A3A3C' : '#FFFFFF' }],
-                  ]}
-                  onPress={() => setFilterMode('ALL')}
-                >
-                  <Text
-                    style={[
-                      styles.segmentText,
-                      { color: colors.textSecondary },
-                      filterMode === 'ALL' && [styles.segmentTextActive, { color: colors.accent }],
-                    ]}
-                  >
-                    All
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[
-                    styles.segmentBtn,
-                    filterMode === 'FIXED' && [styles.segmentBtnActive, { backgroundColor: isDark ? '#3A3A3C' : '#FFFFFF' }],
-                  ]}
-                  onPress={() => setFilterMode('FIXED')}
-                >
-                  <Text
-                    style={[
-                      styles.segmentText,
-                      { color: colors.textSecondary },
-                      filterMode === 'FIXED' && [styles.segmentTextActive, { color: colors.accent }],
-                    ]}
-                  >
-                    Fixed
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[
-                    styles.segmentBtn,
-                    filterMode === 'FLEXIBLE' && [styles.segmentBtnActive, { backgroundColor: isDark ? '#3A3A3C' : '#FFFFFF' }],
-                  ]}
-                  onPress={() => setFilterMode('FLEXIBLE')}
-                >
-                  <Text
-                    style={[
-                      styles.segmentText,
-                      { color: colors.textSecondary },
-                      filterMode === 'FLEXIBLE' && [styles.segmentTextActive, { color: colors.accent }],
-                    ]}
-                  >
-                    Flexible
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            )}
-
-            {/* List Body */}
-            {loading ? (
-              <ActivityIndicator size="small" color={colors.accent} style={{ marginVertical: 32 }} />
-            ) : displayedTransactions.length === 0 ? (
-              <View style={styles.emptyContainer}>
-                <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-                  {searchQuery.trim().length > 0
-                    ? `No matches found for "${searchQuery}"`
-                    : `No ${filterMode !== 'ALL' ? filterMode.toLowerCase() : ''} transactions found for this period.`}
-                </Text>
-              </View>
-            ) : (
-              <ScrollView
-                style={styles.scrollList}
-                showsVerticalScrollIndicator={false}
-                keyboardShouldPersistTaps="handled"
+              {/* Search Input Bar */}
+              <View
+                style={[
+                  styles.searchBarContainer,
+                  {
+                    backgroundColor: isDark ? '#2C2C2E' : '#F2F2F7',
+                    borderColor: colors.border,
+                  },
+                ]}
               >
-                {displayedTransactions.map((trx) => {
-                  const isFixed = trx.is_fixed === 1;
-                  return (
-                    <TouchableOpacity
-                      key={trx.id}
-                      style={[styles.trxRow, { borderBottomColor: colors.border }]}
-                      activeOpacity={0.7}
-                      onPress={() => onSelectTransaction(trx)}
+                <Ionicons name="search" size={16} color={colors.textSecondary} style={styles.searchIcon} />
+                <TextInput
+                  style={[styles.searchInput, { color: colors.text }]}
+                  placeholder="Search merchant, description..."
+                  placeholderTextColor={colors.textSecondary}
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                  clearButtonMode="while-editing"
+                  autoCorrect={false}
+                />
+                {searchQuery.length > 0 && (
+                  <TouchableOpacity onPress={() => setSearchQuery('')} style={styles.clearBtn}>
+                    <Ionicons name="close-circle" size={16} color={colors.textSecondary} />
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              {/* 3-Option Segmented Filter */}
+              {isExpenseModal && (
+                <View style={[styles.segmentedContainer, { backgroundColor: isDark ? '#2C2C2E' : '#E5E5EA' }]}>
+                  <TouchableOpacity
+                    style={[
+                      styles.segmentBtn,
+                      filterMode === 'ALL' && [styles.segmentBtnActive, { backgroundColor: isDark ? '#3A3A3C' : '#FFFFFF' }],
+                    ]}
+                    onPress={() => setFilterMode('ALL')}
+                  >
+                    <Text
+                      style={[
+                        styles.segmentText,
+                        { color: colors.textSecondary },
+                        filterMode === 'ALL' && [styles.segmentTextActive, { color: colors.accent }],
+                      ]}
                     >
-                      <View style={styles.trxLeft}>
-                        <View
-                          style={[
-                            styles.categoryDot,
-                            { backgroundColor: getCategoryColor(trx.category) },
-                          ]}
-                        />
-                        <View style={{ flex: 1 }}>
-                          <View style={styles.merchantRow}>
-                            <Text style={[styles.trxMerchant, { color: colors.text }]} numberOfLines={1}>
-                              {trx.merchant !== 'Unknown' ? trx.merchant : trx.rawDescription}
-                            </Text>
-                            {isExpenseModal && filterMode === 'ALL' && (
-                              <View
-                                style={[
-                                  styles.fixedBadge,
-                                  isFixed ? styles.fixedBadgeActive : styles.flexibleBadgeActive,
-                                ]}
-                              >
-                                <Text
+                      All
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[
+                      styles.segmentBtn,
+                      filterMode === 'FIXED' && [styles.segmentBtnActive, { backgroundColor: isDark ? '#3A3A3C' : '#FFFFFF' }],
+                    ]}
+                    onPress={() => setFilterMode('FIXED')}
+                  >
+                    <Text
+                      style={[
+                        styles.segmentText,
+                        { color: colors.textSecondary },
+                        filterMode === 'FIXED' && [styles.segmentTextActive, { color: colors.accent }],
+                      ]}
+                    >
+                      Fixed
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[
+                      styles.segmentBtn,
+                      filterMode === 'FLEXIBLE' && [styles.segmentBtnActive, { backgroundColor: isDark ? '#3A3A3C' : '#FFFFFF' }],
+                    ]}
+                    onPress={() => setFilterMode('FLEXIBLE')}
+                  >
+                    <Text
+                      style={[
+                        styles.segmentText,
+                        { color: colors.textSecondary },
+                        filterMode === 'FLEXIBLE' && [styles.segmentTextActive, { color: colors.accent }],
+                      ]}
+                    >
+                      Flexible
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              {/* List Body */}
+              {loading ? (
+                <ActivityIndicator size="small" color={colors.accent} style={{ marginVertical: 32 }} />
+              ) : displayedTransactions.length === 0 ? (
+                <View style={styles.emptyContainer}>
+                  <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+                    {searchQuery.trim().length > 0
+                      ? `No matches found for "${searchQuery}"`
+                      : `No ${filterMode !== 'ALL' ? filterMode.toLowerCase() : ''} transactions found for this period.`}
+                  </Text>
+                </View>
+              ) : (
+                <View style={styles.scrollList}>
+                  {displayedTransactions.map((trx) => {
+                    const isFixed = trx.is_fixed === 1;
+                    return (
+                      <TouchableOpacity
+                        key={trx.id}
+                        style={[styles.trxRow, { borderBottomColor: colors.border }]}
+                        activeOpacity={0.7}
+                        onPress={() => onSelectTransaction(trx)}
+                      >
+                        <View style={styles.trxLeft}>
+                          <View
+                            style={[
+                              styles.categoryDot,
+                              { backgroundColor: getCategoryColor(trx.category) },
+                            ]}
+                          />
+                          <View style={{ flex: 1 }}>
+                            <View style={styles.merchantRow}>
+                              <Text style={[styles.trxMerchant, { color: colors.text }]} numberOfLines={1}>
+                                {trx.merchant !== 'Unknown' ? trx.merchant : trx.rawDescription}
+                              </Text>
+                              {isExpenseModal && filterMode === 'ALL' && (
+                                <View
                                   style={[
-                                    styles.fixedBadgeText,
-                                    isFixed ? styles.fixedBadgeTextActive : styles.flexibleBadgeTextActive,
+                                    styles.fixedBadge,
+                                    isFixed ? styles.fixedBadgeActive : styles.flexibleBadgeActive,
                                   ]}
                                 >
-                                  {isFixed ? 'FIXED' : 'FLEX'}
-                                </Text>
-                              </View>
-                            )}
+                                  <Text
+                                    style={[
+                                      styles.fixedBadgeText,
+                                      isFixed ? styles.fixedBadgeTextActive : styles.flexibleBadgeTextActive,
+                                    ]}
+                                  >
+                                    {isFixed ? 'FIXED' : 'FLEX'}
+                                  </Text>
+                                </View>
+                              )}
+                            </View>
+                            <Text style={[styles.trxMeta, { color: colors.textSecondary }]}>
+                              {trx.date} • {trx.category}
+                            </Text>
                           </View>
-                          <Text style={[styles.trxMeta, { color: colors.textSecondary }]}>
-                            {trx.date} • {trx.category}
-                          </Text>
                         </View>
-                      </View>
 
-                      <View style={styles.trxRight}>
-                        <Text
-                          style={[
-                            styles.trxAmount,
-                            { color: trx.amount < 0 ? colors.text : '#34C759' },
-                          ]}
-                        >
-                          {trx.amount < 0
-                            ? `-€${Math.abs(trx.amount).toFixed(2)}`
-                            : `+€${trx.amount.toFixed(2)}`}
-                        </Text>
-                        <Ionicons name="chevron-forward" size={14} color={colors.textSecondary} />
-                      </View>
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-            )}
+                        <View style={styles.trxRight}>
+                          <Text
+                            style={[
+                              styles.trxAmount,
+                              { color: trx.amount < 0 ? colors.text : '#34C759' },
+                            ]}
+                          >
+                            {trx.amount < 0
+                              ? `-€${Math.abs(trx.amount).toFixed(2)}`
+                              : `+€${trx.amount.toFixed(2)}`}
+                          </Text>
+                          <Ionicons name="chevron-forward" size={14} color={colors.textSecondary} />
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              )}
+            </ScrollView>
 
             {/* Close Button */}
             <TouchableOpacity
@@ -336,7 +348,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
   },
-
+  mainScrollView: {
+    flexGrow: 0,
+  },
+  summaryCardWrapper: {
+    marginBottom: 12,
+  },
   searchBarContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -386,7 +403,7 @@ const styles = StyleSheet.create({
   },
 
   scrollList: {
-    maxHeight: 320,
+    paddingBottom: 8,
   },
   trxRow: {
     flexDirection: 'row',

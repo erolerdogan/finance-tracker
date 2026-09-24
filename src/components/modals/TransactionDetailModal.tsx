@@ -16,8 +16,9 @@ interface TransactionDetailModalProps {
   visible: boolean;
   transaction: Transaction | null;
   fixedState: FixedOverrideState;
-  parentTitle?: string; // e.g., "Income Items", "Expenses", or custom category
-  onClose: () => void;
+  parentTitle?: string;
+  onClose: () => void; // Called when clicking Back Button
+  onDismiss?: () => void; // Called when tapping backdrop / dismiss
   onSelectFixedState: (newState: FixedOverrideState) => void;
 }
 
@@ -25,7 +26,7 @@ export function TransactionDetailModal({
   visible,
   transaction,
   fixedState,
-  parentTitle = 'List',
+  parentTitle = 'Back',
   onClose,
   onSelectFixedState,
 }: TransactionDetailModalProps) {
@@ -58,7 +59,7 @@ export function TransactionDetailModal({
           >
             <View style={[styles.sheetHandle, { backgroundColor: colors.border }]} />
 
-            {/* Header Nav Bar with Contextual Back Action */}
+            {/* Restored Header Nav Bar with Back Button */}
             <View style={styles.headerNavRow}>
               <TouchableOpacity
                 style={[

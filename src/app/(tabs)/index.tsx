@@ -1,5 +1,4 @@
 import { AllocationChart } from '@/components/dashboard/AllocationChart';
-import { FixedFlexibleCard } from '@/components/dashboard/FixedFlexibleCard';
 import { MonthStepper } from '@/components/dashboard/MonthStepper';
 import { SummaryCards } from '@/components/dashboard/SummaryCards';
 import { WelcomeHero } from '@/components/dashboard/WelcomeHero';
@@ -84,6 +83,8 @@ export default function DashboardScreen() {
   const [monthPickerVisible, setMonthPickerVisible] = useState(false);
   const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
   const [currentFixedState, setCurrentFixedState] = useState<FixedOverrideState>('AUTO');
+  const [detailParentTitle, setDetailParentTitle] = useState<string>('Back');
+  const [wasOpenedFromList, setWasOpenedFromList] = useState(false);
 
   // Card Modal State
   const [listModalVisible, setListModalVisible] = useState(false);
@@ -230,8 +231,17 @@ export default function DashboardScreen() {
     }
   };
 
-  const handleSelectTransaction = async (trx: Transaction) => {
+  const handleSelectTransaction = async (trx: Transaction, customParentTitle?: string) => {
     setSelectedTransaction(trx);
+
+    if (customParentTitle) {
+      setDetailParentTitle(customParentTitle);
+    } else if (selectedBarCategory) {
+      setDetailParentTitle(selectedBarCategory);
+    } else {
+      setDetailParentTitle(trx.amount > 0 ? 'Income Items' : 'Expenses');
+    }
+
     if (db && trx) {
       const overrideState = await getTransactionFixedState(db, trx, activeProfileId);
       setCurrentFixedState(overrideState);
@@ -239,19 +249,37 @@ export default function DashboardScreen() {
   };
 
   const handleSelectFromFlatList = (trx: Transaction) => {
+    const parentTitleMap: Record<string, string> = {
+      INCOME: 'Income Items',
+      EXPENSE: 'Expenses',
+      FIXED: 'Fixed Transactions',
+      FLEXIBLE: 'Flexible Transactions',
+    };
+
+    const parentTitle = parentTitleMap[listModalType] || 'Back';
+    setWasOpenedFromList(true);
     setListModalVisible(false);
+
     setTimeout(() => {
-      handleSelectTransaction(trx);
+      handleSelectTransaction(trx, parentTitle);
     }, 250);
   };
 
-  const handleCloseDetail = () => {
+  // Back Button Press: Step back to list modal if opened from list
+  const handleGoBackFromDetail = () => {
     setSelectedTransaction(null);
-    if (listModalType) {
+    if (wasOpenedFromList) {
+      setWasOpenedFromList(false);
       setTimeout(() => {
         setListModalVisible(true);
       }, 250);
     }
+  };
+
+  // Outer Backdrop Tap / Dismiss: Close everything directly
+  const handleDismissDetailDirectly = () => {
+    setWasOpenedFromList(false);
+    setSelectedTransaction(null);
   };
 
   const handleSelectFixedState = async (newState: FixedOverrideState) => {
@@ -411,13 +439,10 @@ export default function DashboardScreen() {
                 selectedCategoryTransactions={selectedCategoryTransactions}
                 loadingTransactions={loadingTransactions}
                 onBarPress={handleBarPress}
-                onSelectTransaction={handleSelectTransaction}
-              />
-
-              {/* Fixed vs Flexible Board */}
-              <FixedFlexibleCard
-                summary={fixedSummary}
-                onPress={() => handleOpenCardModal('EXPENSE')}
+                onSelectTransaction={(trx) => {
+                  setWasOpenedFromList(false);
+                  handleSelectTransaction(trx, selectedBarCategory ?? 'Category');
+                }}
               />
             </>
           )}
@@ -430,6 +455,7 @@ export default function DashboardScreen() {
           monthNames={MONTH_NAMES}
           transactions={listModalTransactions}
           loading={loadingListModal}
+          fixedSummary={fixedSummary}
           onClose={() => setListModalVisible(false)}
           onSelectTransaction={handleSelectFromFlatList}
         />
@@ -438,16 +464,9 @@ export default function DashboardScreen() {
           visible={selectedTransaction !== null}
           transaction={selectedTransaction}
           fixedState={currentFixedState}
-          parentTitle={
-            listModalType === 'INCOME'
-              ? 'Income Items'
-              : listModalType === 'FIXED'
-              ? 'Fixed Transactions'
-              : listModalType === 'FLEXIBLE'
-              ? 'Flexible Transactions'
-              : 'Expenses'
-          }
-          onClose={handleCloseDetail}
+          parentTitle={detailParentTitle}
+          onClose={handleGoBackFromDetail}
+          onDismiss={handleDismissDetailDirectly}
           onSelectFixedState={handleSelectFixedState}
         />
 
