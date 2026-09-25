@@ -1230,3 +1230,17 @@ export async function getIncomeFixedVsFlexibleSummary(
     fixedItemsCount: fixedCount,
   };
 }
+
+export async function clearDemoWorkspace(db: SQLiteDatabase, demoProfileId: number = 1): Promise<void> {
+  await db.withTransactionAsync(async () => {
+    // 1. Remove all transactions under demo profile
+    await db.runAsync('DELETE FROM transactions WHERE profile_id = ?;', [demoProfileId]);
+    
+    // 2. Remove category goals & merchant overrides for demo profile
+    await db.runAsync('DELETE FROM category_goals WHERE profile_id = ?;', [demoProfileId]);
+    await db.runAsync('DELETE FROM merchant_fixed_overrides WHERE profile_id = ?;', [demoProfileId]);
+
+    // 3. Mark demo mode flag or delete demo profile if applicable
+    await db.runAsync('UPDATE profiles SET is_demo = 0 WHERE id = ?;', [demoProfileId]);
+  });
+}

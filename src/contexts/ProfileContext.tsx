@@ -5,21 +5,29 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 interface ProfileContextType {
   activeProfile: Profile | null;
   profiles: Profile[];
+  isDemoMode: boolean;
+  hasData: boolean;
+  loadingProfiles: boolean;
+  setIsDemoMode: (isDemo: boolean) => void;
   switchProfile: (profile: Profile) => void;
   addNewProfile: (name: string, color?: string) => Promise<Profile | null>;
   editProfile: (id: number, name: string, color: string) => Promise<void>;
   refreshProfiles: () => Promise<void>;
-  loadingProfiles: boolean;
+  checkDataState: () => Promise<boolean>;
 }
 
 const ProfileContext = createContext<ProfileContextType>({
   activeProfile: null,
   profiles: [],
+  isDemoMode: false,
+  hasData: false,
+  loadingProfiles: true,
+  setIsDemoMode: () => {},
   switchProfile: () => {},
   addNewProfile: async () => null,
   editProfile: async () => {},
   refreshProfiles: async () => {},
-  loadingProfiles: true,
+  checkDataState: async () => false,
 });
 
 export function ProfileProvider({ children }: { children: React.ReactNode }) {
@@ -27,6 +35,23 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [activeProfile, setActiveProfile] = useState<Profile | null>(null);
   const [loadingProfiles, setLoadingProfiles] = useState(true);
+  const [isDemoMode, setIsDemoMode] = useState<boolean>(false);
+  const [hasData, setHasData] = useState<boolean>(false);
+
+  const checkDataState = async (): Promise<boolean> => {
+    if (!db) return false;
+    try {
+      const result = await db.getFirstAsync<{ count: number }>(
+        'SELECT COUNT(*) as count FROM transactions;'
+      );
+      const exists = (result?.count ?? 0) > 0;
+      setHasData(exists);
+      return exists;
+    } catch (error) {
+      console.error('Error checking transaction count:', error);
+      return false;
+    }
+  };
 
   const refreshProfiles = async () => {
     if (!db) return;
@@ -38,6 +63,7 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
       if (list.length > 0 && !activeProfile) {
         setActiveProfile(list[0]);
       }
+      await checkDataState();
     } catch (error) {
       console.error('Error loading profiles:', error);
     } finally {
@@ -86,11 +112,15 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
       value={{
         activeProfile,
         profiles,
+        isDemoMode,
+        hasData,
+        loadingProfiles,
+        setIsDemoMode,
         switchProfile,
         addNewProfile,
         editProfile,
         refreshProfiles,
-        loadingProfiles,
+        checkDataState,
       }}
     >
       {children}

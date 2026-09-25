@@ -30,7 +30,7 @@ export default function SettingsScreen() {
   const { isDark, toggleTheme, colors } = useTheme();
   const router = useRouter();
   const db = useSQLiteContext();
-  const { activeProfile } = useProfile();
+  const { activeProfile, setIsDemoMode } = useProfile();
   const activeProfileId = activeProfile?.id ?? 1;
 
   const [loading, setLoading] = useState(false);
@@ -98,6 +98,39 @@ export default function SettingsScreen() {
       setLoading(false);
       isPickingRef.current = false;
     }
+  };
+
+  // Req 23: End Demo Workspace & return to Dataset Landing Screen
+  const handleEndDemoWorkspace = () => {
+    Alert.alert(
+      'End Demo Workspace?',
+      'This will wipe all demo sample transactions and reset budget goals. You will return to the landing page to import your own statement.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'End & Import',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              setLoading(true);
+              if (db) {
+                await clearAllData(db, activeProfileId);
+              }
+              if (setIsDemoMode) {
+                setIsDemoMode(false);
+              }
+              router.dismissAll();
+              router.replace('/');
+            } catch (error) {
+              console.error('Failed to end demo workspace:', error);
+              Alert.alert('Error', 'Failed to reset demo workspace.');
+            } finally {
+              setLoading(false);
+            }
+          },
+        },
+      ]
+    );
   };
 
   const handleResetDatabase = () => {
@@ -205,6 +238,29 @@ export default function SettingsScreen() {
             ) : (
               <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
             )}
+          </TouchableOpacity>
+
+          <View style={[styles.divider, { backgroundColor: colors.border }]} />
+
+          {/* Req 23: End Demo Mode Action Row */}
+          <TouchableOpacity
+            style={styles.rowItem}
+            activeOpacity={0.7}
+            onPress={handleEndDemoWorkspace}
+            disabled={loading}
+          >
+            <View style={styles.rowLeft}>
+              <View style={[styles.iconCircle, { backgroundColor: '#FFF0ED' }]}>
+                <Ionicons name="exit-outline" size={18} color="#FF9500" />
+              </View>
+              <View>
+                <Text style={[styles.rowTitle, { color: '#FF9500' }]}>End Demo Workspace</Text>
+                <Text style={[styles.rowSub, { color: colors.textSecondary }]}>
+                  Return to landing page to import your dataset
+                </Text>
+              </View>
+            </View>
+            <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
           </TouchableOpacity>
 
           <View style={[styles.divider, { backgroundColor: colors.border }]} />

@@ -1,7 +1,7 @@
 import { AllocationChart } from '@/components/dashboard/AllocationChart';
 import { MonthStepper } from '@/components/dashboard/MonthStepper';
 import { SummaryCards } from '@/components/dashboard/SummaryCards';
-import { WelcomeHero } from '@/components/dashboard/WelcomeHero';
+import { DemoBanner } from '@/components/DemoBanner';
 import { TransactionDetailModal } from '@/components/modals/TransactionDetailModal';
 import { TransactionListModal } from '@/components/modals/TransactionListModal';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -12,10 +12,13 @@ import {
   getAvailableMonths,
   getFilteredTransactions,
   getFixedOrFlexibleTransactions,
-  getFixedVsFlexibleSummary, getIncomeFixedVsFlexibleSummary, getMonthlyCategoryTotals,
+  getFixedVsFlexibleSummary,
+  getIncomeFixedVsFlexibleSummary,
+  getMonthlyCategoryTotals,
   getMonthlySummary,
   getTransactionFixedState,
-  getTransactionsByMonthAndCategory, MonthlySummary,
+  getTransactionsByMonthAndCategory,
+  MonthlySummary,
   setMerchantFixedOverride,
   Transaction
 } from '@/db/database';
@@ -70,7 +73,7 @@ export default function DashboardScreen() {
   const router = useRouter();
   const db = useSQLiteContext();
   const { colors } = useTheme();
-  const { activeProfile } = useProfile();
+  const { activeProfile, isDemoMode } = useProfile();
   const activeProfileId = activeProfile?.id ?? 1;
 
   const [loading, setLoading] = useState(true);
@@ -99,7 +102,6 @@ export default function DashboardScreen() {
   });
 
   // Dashboard Data
-
   const [incomeSummary, setIncomeSummary] = useState<FixedCostSummary>({
     fixedTotal: 0,
     flexibleTotal: 0,
@@ -274,7 +276,6 @@ export default function DashboardScreen() {
     }, 250);
   };
 
-  // Back Button Press: Step back to list modal if opened from list
   const handleGoBackFromDetail = () => {
     setSelectedTransaction(null);
     if (wasOpenedFromList) {
@@ -285,7 +286,6 @@ export default function DashboardScreen() {
     }
   };
 
-  // Outer Backdrop Tap / Dismiss: Close everything directly
   const handleDismissDetailDirectly = () => {
     setWasOpenedFromList(false);
     setSelectedTransaction(null);
@@ -302,7 +302,6 @@ export default function DashboardScreen() {
         : selectedTransaction.rawDescription;
   
     try {
-      // 1. Update DB rule & transaction overrides
       await setMerchantFixedOverride(
         db,
         keyword,
@@ -311,12 +310,10 @@ export default function DashboardScreen() {
         activeProfileId
       );
   
-      // 2. Derive updated numeric is_fixed value (1 for FIXED, 0 for FLEXIBLE, NULL for AUTO)
       let updatedIsFixedVal: number | null = null;
       if (newState === 'FIXED') updatedIsFixedVal = 1;
       if (newState === 'FLEXIBLE') updatedIsFixedVal = 0;
   
-      // 3. Update currently open selectedTransaction state
       setSelectedTransaction((prev) =>
         prev
           ? {
@@ -326,7 +323,6 @@ export default function DashboardScreen() {
           : null
       );
   
-      // 4. Update the list modal transactions state so list tags update instantly
       setListModalTransactions((prevList) =>
         prevList.map((tx) => {
           const txKeyword =
@@ -343,7 +339,6 @@ export default function DashboardScreen() {
         })
       );
   
-      // 5. Refresh category drill-down list if open
       if (selectedBarCategory) {
         const updatedItems = await getTransactionsByMonthAndCategory(
           db,
@@ -354,7 +349,6 @@ export default function DashboardScreen() {
         setSelectedCategoryTransactions(updatedItems || []);
       }
   
-      // 6. Reload overall dashboard metrics & summary cards
       await loadDashboardData();
     } catch (error) {
       console.error('Failed to update fixed state override:', error);
@@ -437,31 +431,70 @@ export default function DashboardScreen() {
             />
           }
         >
-          {/* Top Header Bar */}
-          <View style={styles.headerRow}>
-            <Text style={[styles.headerTitle, { color: colors.text }]}>Overview</Text>
+          {/* Conditional Empty State / Welcome Onboarding View */}
+          {availableMonths.length === 0 && !isDemoMode ? (
+            <View style={styles.welcomeContainer}>
+              <View style={styles.welcomeHeader}>
+                <Text style={styles.badge}>LOCAL-FIRST & PRIVATE</Text>
+                <Text style={[styles.welcomeTitle, { color: colors.text }]}>
+                  Track Your Finances
+                </Text>
+                <Text style={[styles.welcomeSubtitle, { color: colors.textSecondary }]}>
+                  Your financial data stays 100% on this device. Start by importing your bank statement or explore with sample data.
+                </Text>
+              </View>
 
-            <TouchableOpacity
-              style={[
-                styles.settingsHeaderBtn,
-                { backgroundColor: colors.card, borderColor: colors.border },
-              ]}
-              activeOpacity={0.8}
-              onPress={() => router.push('/settings')}
-            >
-              <Ionicons name="settings-outline" size={20} color={colors.text} />
-            </TouchableOpacity>
-          </View>
+              <View style={styles.actionContainer}>
+                <TouchableOpacity 
+                  style={[styles.primaryButton, { backgroundColor: colors.accent }]} 
+                  onPress={() => router.push('/settings')} 
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.primaryButtonText}>Import Bank Statement</Text>
+                  <Text style={styles.buttonSubtext}>CSV or XLSX file</Text>
+                </TouchableOpacity>
 
-          {/* Conditional Empty State Landing View */}
-          {availableMonths.length === 0 ? (
-            <WelcomeHero
-              onImportPress={() => router.push('/settings')}
-              onLoadDemoPress={handleLoadDemo}
-              loadingDemo={loadingDemo}
-            />
+                <TouchableOpacity 
+                  style={[
+                    styles.secondaryButton, 
+                    { 
+                      backgroundColor: colors.card, 
+                      borderColor: colors.border 
+                    }
+                  ]} 
+                  onPress={handleLoadDemo} 
+                  activeOpacity={0.8}
+                >
+                  <Text style={[styles.secondaryButtonText, { color: colors.accent }]}>
+                    Explore Demo Workspace
+                  </Text>
+                  <Text style={[styles.buttonSubtextSecondary, { color: colors.textSecondary }]}>
+                    Pre-loaded sample transactions
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
           ) : (
             <>
+              {/* Demo Workspace Banner */}
+              <DemoBanner />
+
+              {/* Top Header Bar */}
+              <View style={styles.headerRow}>
+                <Text style={[styles.headerTitle, { color: colors.text }]}>Overview</Text>
+
+                <TouchableOpacity
+                  style={[
+                    styles.settingsHeaderBtn,
+                    { backgroundColor: colors.card, borderColor: colors.border },
+                  ]}
+                  activeOpacity={0.8}
+                  onPress={() => router.push('/settings')}
+                >
+                  <Ionicons name="settings-outline" size={20} color={colors.text} />
+                </TouchableOpacity>
+              </View>
+
               {/* Month Stepper Navigation */}
               <MonthStepper
                 selectedMonth={selectedMonth}
@@ -604,6 +637,73 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.04,
     shadowRadius: 3,
     elevation: 1,
+  },
+  welcomeContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 60,
+    paddingHorizontal: 16,
+  },
+  welcomeHeader: {
+    alignItems: 'center',
+    marginBottom: 48,
+  },
+  badge: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#34C759',
+    letterSpacing: 1,
+    marginBottom: 12,
+  },
+  welcomeTitle: {
+    fontSize: 32,
+    fontWeight: '800',
+    textAlign: 'center',
+    marginBottom: 12,
+  },
+  welcomeSubtitle: {
+    fontSize: 16,
+    textAlign: 'center',
+    lineHeight: 22,
+    paddingHorizontal: 16,
+  },
+  actionContainer: {
+    width: '100%',
+    gap: 16,
+  },
+  primaryButton: {
+    borderRadius: 16,
+    paddingVertical: 18,
+    alignItems: 'center',
+    shadowColor: '#007AFF',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+  },
+  primaryButtonText: {
+    color: '#FFFFFF',
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  buttonSubtext: {
+    color: 'rgba(255,255,255,0.8)',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  secondaryButton: {
+    borderRadius: 16,
+    paddingVertical: 18,
+    alignItems: 'center',
+    borderWidth: 1,
+  },
+  secondaryButtonText: {
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  buttonSubtextSecondary: {
+    fontSize: 12,
+    marginTop: 2,
   },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
   sheetContainer: {

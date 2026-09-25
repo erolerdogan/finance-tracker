@@ -1,3 +1,4 @@
+import { DemoBanner } from '@/components/DemoBanner';
 import { TransactionDetailModal } from '@/components/modals/TransactionDetailModal';
 import { TransactionListModal } from '@/components/modals/TransactionListModal';
 import { getCategoryColor } from '@/constants/colors';
@@ -352,7 +353,7 @@ const chartData = React.useMemo(() => {
   };
 
   return (
-    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]} edges={['top']}>
+<SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]} edges={['top']}>
       <View style={[styles.container, { backgroundColor: colors.background }]}>
         <ScrollView
           style={{ flex: 1 }}
@@ -368,6 +369,9 @@ const chartData = React.useMemo(() => {
             />
           }
         >
+          {/* Demo Workspace Banner */}
+          <DemoBanner />
+
           {/* Header Bar */}
           <View style={styles.headerRow}>
             <Text style={[styles.headerTitle, { color: colors.text }]}>Trends</Text>
@@ -382,7 +386,6 @@ const chartData = React.useMemo(() => {
               <Ionicons name="settings-outline" size={20} color={colors.text} />
             </TouchableOpacity>
           </View>
-
           {/* Horizontal Filter Pills */}
           <ScrollView
             horizontal
