@@ -41,6 +41,14 @@
           "imageWidth": 76
         }
       ],
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "enableSceneSupport": true
+          }
+        }
+      ],
       "expo-sqlite"
     ],
     "experiments": {

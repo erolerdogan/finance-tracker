@@ -9,14 +9,14 @@ import { Alert, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 export function DemoBanner() {
   const router = useRouter();
   const db = useSQLiteContext();
-  const { isDemoMode, setIsDemoMode, activeProfile } = useProfile();
+  const { isDemoMode, setIsDemoMode, activeProfile, refreshProfiles } = useProfile();
 
   if (!isDemoMode) return null;
 
   const handleEndDemo = () => {
     Alert.alert(
-      'Exit Demo Mode?',
-      'This will clear demo transactions and return you to the main page to import your dataset.',
+      'Exit Demo Workspace?',
+      'This will clear demo transactions and return you to the welcome screen.',
       [
         { text: 'Keep Exploring', style: 'cancel' },
         {
@@ -27,10 +27,15 @@ export function DemoBanner() {
               if (db && activeProfile?.id) {
                 await clearAllData(db, activeProfile.id);
               }
+              // 1. Update demo mode and profile state
               setIsDemoMode(false);
-              router.replace('/');
+              
+              // 2. Force immediate imperative navigation without waiting for hanging loaders
+              router.replace('/welcome');
             } catch (err) {
               console.error('Failed to end demo mode:', err);
+              // Fallback force navigation even if database clear throws
+              router.replace('/welcome');
             }
           },
         },
@@ -61,9 +66,9 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: '#FFE0B2',
     paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingVertical: 8,
     borderRadius: 10,
-    marginBottom: 8,
+    marginBottom: 12,
   },
   leftContent: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   bannerText: { fontSize: 12, fontWeight: '700', color: '#CC7A00' },
