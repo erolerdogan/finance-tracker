@@ -3,13 +3,17 @@ import { getCategoryColor } from '@/constants/colors';
 import { useTheme } from '@/contexts/ThemeContext';
 import { FixedCostSummary, Transaction } from '@/db/database';
 import { Ionicons } from '@expo/vector-icons';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Animated,
+  Dimensions,
+  FlatList,
+  InteractionManager,
   KeyboardAvoidingView,
   Modal,
+  PanResponder,
   Platform,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -17,6 +21,8 @@ import {
   TouchableWithoutFeedback,
   View
 } from 'react-native';
+
+const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 export type ExpenseFilterMode = 'ALL' | 'FIXED' | 'FLEXIBLE';
 
@@ -48,17 +54,84 @@ export function TransactionListModal({
 
   const [searchQuery, setSearchQuery] = useState('');
   const [filterMode, setFilterMode] = useState<ExpenseFilterMode>('ALL');
+  const [isReady, setIsReady] = useState(false); // 🚀 Defer list rendering during slide transition
+
+  const translateY = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
+  const overlayOpacity = useRef(new Animated.Value(0)).current;
+
+  const handleDismiss = () => {
+    Animated.parallel([
+      Animated.timing(translateY, {
+        toValue: SCREEN_HEIGHT,
+        duration: 200,
+        useNativeDriver: true,
+      }),
+      Animated.timing(overlayOpacity, {
+        toValue: 0,
+        duration: 180,
+        useNativeDriver: true,
+      }),
+    ]).start(() => {
+      setIsReady(false);
+      onClose();
+    });
+  };
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: (_, gestureState) => gestureState.dy > 5,
+      onPanResponderMove: (_, gestureState) => {
+        if (gestureState.dy > 0) {
+          translateY.setValue(gestureState.dy);
+        }
+      },
+      onPanResponderRelease: (_, gestureState) => {
+        if (gestureState.dy > 120 || gestureState.vy > 0.5) {
+          handleDismiss();
+        } else {
+          Animated.spring(translateY, {
+            toValue: 0,
+            useNativeDriver: true,
+            damping: 20,
+            stiffness: 250,
+          }).start();
+        }
+      },
+    })
+  ).current;
 
   useEffect(() => {
     if (visible) {
       setSearchQuery('');
-      if (listType === 'FIXED') {
-        setFilterMode('FIXED');
-      } else if (listType === 'FLEXIBLE') {
-        setFilterMode('FLEXIBLE');
-      } else {
-        setFilterMode('ALL');
-      }
+      setFilterMode(listType === 'FIXED' ? 'FIXED' : listType === 'FLEXIBLE' ? 'FLEXIBLE' : 'ALL');
+      setIsReady(false);
+
+      translateY.setValue(SCREEN_HEIGHT);
+      overlayOpacity.setValue(0);
+
+      // 1. Kick off UI thread native animation instantly
+      Animated.parallel([
+        Animated.timing(overlayOpacity, {
+          toValue: 1,
+          duration: 180,
+          useNativeDriver: true,
+        }),
+        Animated.spring(translateY, {
+          toValue: 0,
+          useNativeDriver: true,
+          damping: 22,
+          stiffness: 260,
+          mass: 0.8,
+        }),
+      ]).start();
+
+      // 2. Defer heavy list JS mounting until sheet slide completes
+      const task = InteractionManager.runAfterInteractions(() => {
+        setIsReady(true);
+      });
+
+      return () => task.cancel();
     }
   }, [visible, listType]);
 
@@ -76,7 +149,7 @@ export function TransactionListModal({
       if (!matchesSearch) return false;
     }
 
-    if (!isExpenseModal || filterMode === 'ALL') return true;
+    if (filterMode === 'ALL') return true;
     const isFixed = tx.is_fixed === 1;
     if (filterMode === 'FIXED') return isFixed;
     if (filterMode === 'FLEXIBLE') return !isFixed;
@@ -85,21 +158,100 @@ export function TransactionListModal({
 
   const totalAmount = displayedTransactions.reduce((acc, tx) => acc + Math.abs(tx.amount), 0);
 
+  const renderTransactionItem = ({ item: trx }: { item: Transaction }) => {
+    const isFixed = trx.is_fixed === 1;
+    return (
+      <TouchableOpacity
+        style={[styles.trxRow, { borderBottomColor: colors.border }]}
+        activeOpacity={0.7}
+        onPress={() => onSelectTransaction(trx)}
+      >
+        <View style={styles.trxLeft}>
+          <View
+            style={[
+              styles.categoryDot,
+              { backgroundColor: getCategoryColor(trx.category) },
+            ]}
+          />
+          <View style={{ flex: 1 }}>
+            <View style={styles.merchantRow}>
+              <Text style={[styles.trxMerchant, { color: colors.text }]} numberOfLines={1}>
+                {trx.merchant !== 'Unknown' ? trx.merchant : trx.rawDescription}
+              </Text>
+              {filterMode === 'ALL' && (
+                <View
+                  style={[
+                    styles.fixedBadge,
+                    isFixed ? styles.fixedBadgeActive : styles.flexibleBadgeActive,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.fixedBadgeText,
+                      isFixed ? styles.fixedBadgeTextActive : styles.flexibleBadgeTextActive,
+                    ]}
+                  >
+                    {isFixed ? 'FIXED' : 'FLEX'}
+                  </Text>
+                </View>
+              )}
+            </View>
+            <Text style={[styles.trxMeta, { color: colors.textSecondary }]}>
+              {trx.date} • {trx.category}
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.trxRight}>
+          <Text
+            style={[
+              styles.trxAmount,
+              { color: trx.amount < 0 ? colors.text : '#34C759' },
+            ]}
+          >
+            {trx.amount < 0
+              ? `-€${Math.abs(trx.amount).toFixed(2)}`
+              : `+€${trx.amount.toFixed(2)}`}
+          </Text>
+          <Ionicons name="chevron-forward" size={14} color={colors.textSecondary} />
+        </View>
+      </TouchableOpacity>
+    );
+  };
+
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={onClose}>
-        <TouchableWithoutFeedback>
-          <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    <Modal visible={visible} transparent animationType="none" onRequestClose={handleDismiss}>
+      <View style={styles.modalOverlay}>
+        <TouchableWithoutFeedback onPress={handleDismiss}>
+          <Animated.View
+            style={[
+              StyleSheet.absoluteFill,
+              {
+                backgroundColor: 'rgba(0,0,0,0.5)',
+                opacity: overlayOpacity,
+              },
+            ]}
+          />
+        </TouchableWithoutFeedback>
+
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.keyboardContainer}
+        >
+          <Animated.View
             style={[
               styles.sheetContainer,
               {
                 backgroundColor: isDark ? colors.card : colors.background,
                 borderColor: colors.border,
+                transform: [{ translateY }],
               },
             ]}
           >
-            <View style={[styles.sheetHandle, { backgroundColor: colors.border }]} />
+            {/* Swipe Drag Bar */}
+            <View style={styles.handleContainer} {...panResponder.panHandlers}>
+              <View style={[styles.sheetHandle, { backgroundColor: colors.border }]} />
+            </View>
 
             {/* Header */}
             <View style={styles.headerRow}>
@@ -114,192 +266,134 @@ export function TransactionListModal({
               </View>
             </View>
 
-            <ScrollView
-              style={styles.mainScrollView}
-              showsVerticalScrollIndicator={false}
-              keyboardShouldPersistTaps="handled"
-            >
-              {/* Fixed & Flexible Summary Card inside Total Expenses Sheet */}
-              {isExpenseModal && fixedSummary && (
-                <View style={styles.summaryCardWrapper}>
-                  <FixedFlexibleCard summary={fixedSummary} />
-                </View>
-              )}
+            {/* Render FlatList directly without nested ScrollView */}
+            {!isReady || loading ? (
+              <ActivityIndicator size="small" color={colors.accent} style={{ marginVertical: 48 }} />
+            ) : (
+              <FlatList
+                data={displayedTransactions}
+                keyExtractor={(item) => item.id.toString()}
+                renderItem={renderTransactionItem}
+                showsVerticalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+                initialNumToRender={10}
+                maxToRenderPerBatch={10}
+                windowSize={5}
+                ListHeaderComponent={
+                  <>
+                    {fixedSummary && (
+                      <View style={styles.summaryCardWrapper}>
+                        <FixedFlexibleCard summary={fixedSummary} />
+                      </View>
+                    )}
 
-              {/* Search Input Bar */}
-              <View
-                style={[
-                  styles.searchBarContainer,
-                  {
-                    backgroundColor: isDark ? '#2C2C2E' : '#F2F2F7',
-                    borderColor: colors.border,
-                  },
-                ]}
-              >
-                <Ionicons name="search" size={16} color={colors.textSecondary} style={styles.searchIcon} />
-                <TextInput
-                  style={[styles.searchInput, { color: colors.text }]}
-                  placeholder="Search merchant, description..."
-                  placeholderTextColor={colors.textSecondary}
-                  value={searchQuery}
-                  onChangeText={setSearchQuery}
-                  clearButtonMode="while-editing"
-                  autoCorrect={false}
-                />
-                {searchQuery.length > 0 && (
-                  <TouchableOpacity onPress={() => setSearchQuery('')} style={styles.clearBtn}>
-                    <Ionicons name="close-circle" size={16} color={colors.textSecondary} />
-                  </TouchableOpacity>
-                )}
-              </View>
-
-              {/* 3-Option Segmented Filter */}
-              {isExpenseModal && (
-                <View style={[styles.segmentedContainer, { backgroundColor: isDark ? '#2C2C2E' : '#E5E5EA' }]}>
-                  <TouchableOpacity
-                    style={[
-                      styles.segmentBtn,
-                      filterMode === 'ALL' && [styles.segmentBtnActive, { backgroundColor: isDark ? '#3A3A3C' : '#FFFFFF' }],
-                    ]}
-                    onPress={() => setFilterMode('ALL')}
-                  >
-                    <Text
+                    {/* Search Bar */}
+                    <View
                       style={[
-                        styles.segmentText,
-                        { color: colors.textSecondary },
-                        filterMode === 'ALL' && [styles.segmentTextActive, { color: colors.accent }],
+                        styles.searchBarContainer,
+                        {
+                          backgroundColor: isDark ? '#2C2C2E' : '#F2F2F7',
+                          borderColor: colors.border,
+                        },
                       ]}
                     >
-                      All
-                    </Text>
-                  </TouchableOpacity>
+                      <Ionicons name="search" size={16} color={colors.textSecondary} style={styles.searchIcon} />
+                      <TextInput
+                        style={[styles.searchInput, { color: colors.text }]}
+                        placeholder="Search merchant, description..."
+                        placeholderTextColor={colors.textSecondary}
+                        value={searchQuery}
+                        onChangeText={setSearchQuery}
+                        clearButtonMode="while-editing"
+                        autoCorrect={false}
+                      />
+                      {searchQuery.length > 0 && (
+                        <TouchableOpacity onPress={() => setSearchQuery('')} style={styles.clearBtn}>
+                          <Ionicons name="close-circle" size={16} color={colors.textSecondary} />
+                        </TouchableOpacity>
+                      )}
+                    </View>
 
-                  <TouchableOpacity
-                    style={[
-                      styles.segmentBtn,
-                      filterMode === 'FIXED' && [styles.segmentBtnActive, { backgroundColor: isDark ? '#3A3A3C' : '#FFFFFF' }],
-                    ]}
-                    onPress={() => setFilterMode('FIXED')}
-                  >
-                    <Text
-                      style={[
-                        styles.segmentText,
-                        { color: colors.textSecondary },
-                        filterMode === 'FIXED' && [styles.segmentTextActive, { color: colors.accent }],
-                      ]}
-                    >
-                      Fixed
-                    </Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={[
-                      styles.segmentBtn,
-                      filterMode === 'FLEXIBLE' && [styles.segmentBtnActive, { backgroundColor: isDark ? '#3A3A3C' : '#FFFFFF' }],
-                    ]}
-                    onPress={() => setFilterMode('FLEXIBLE')}
-                  >
-                    <Text
-                      style={[
-                        styles.segmentText,
-                        { color: colors.textSecondary },
-                        filterMode === 'FLEXIBLE' && [styles.segmentTextActive, { color: colors.accent }],
-                      ]}
-                    >
-                      Flexible
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              )}
-
-              {/* List Body */}
-              {loading ? (
-                <ActivityIndicator size="small" color={colors.accent} style={{ marginVertical: 32 }} />
-              ) : displayedTransactions.length === 0 ? (
-                <View style={styles.emptyContainer}>
-                  <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-                    {searchQuery.trim().length > 0
-                      ? `No matches found for "${searchQuery}"`
-                      : `No ${filterMode !== 'ALL' ? filterMode.toLowerCase() : ''} transactions found for this period.`}
-                  </Text>
-                </View>
-              ) : (
-                <View style={styles.scrollList}>
-                  {displayedTransactions.map((trx) => {
-                    const isFixed = trx.is_fixed === 1;
-                    return (
+                    {/* Segmented Filter Control */}
+                    <View style={[styles.segmentedContainer, { backgroundColor: isDark ? '#2C2C2E' : '#E5E5EA' }]}>
                       <TouchableOpacity
-                        key={trx.id}
-                        style={[styles.trxRow, { borderBottomColor: colors.border }]}
-                        activeOpacity={0.7}
-                        onPress={() => onSelectTransaction(trx)}
+                        style={[
+                          styles.segmentBtn,
+                          filterMode === 'ALL' && [styles.segmentBtnActive, { backgroundColor: isDark ? '#3A3A3C' : '#FFFFFF' }],
+                        ]}
+                        onPress={() => setFilterMode('ALL')}
                       >
-                        <View style={styles.trxLeft}>
-                          <View
-                            style={[
-                              styles.categoryDot,
-                              { backgroundColor: getCategoryColor(trx.category) },
-                            ]}
-                          />
-                          <View style={{ flex: 1 }}>
-                            <View style={styles.merchantRow}>
-                              <Text style={[styles.trxMerchant, { color: colors.text }]} numberOfLines={1}>
-                                {trx.merchant !== 'Unknown' ? trx.merchant : trx.rawDescription}
-                              </Text>
-                              {isExpenseModal && filterMode === 'ALL' && (
-                                <View
-                                  style={[
-                                    styles.fixedBadge,
-                                    isFixed ? styles.fixedBadgeActive : styles.flexibleBadgeActive,
-                                  ]}
-                                >
-                                  <Text
-                                    style={[
-                                      styles.fixedBadgeText,
-                                      isFixed ? styles.fixedBadgeTextActive : styles.flexibleBadgeTextActive,
-                                    ]}
-                                  >
-                                    {isFixed ? 'FIXED' : 'FLEX'}
-                                  </Text>
-                                </View>
-                              )}
-                            </View>
-                            <Text style={[styles.trxMeta, { color: colors.textSecondary }]}>
-                              {trx.date} • {trx.category}
-                            </Text>
-                          </View>
-                        </View>
-
-                        <View style={styles.trxRight}>
-                          <Text
-                            style={[
-                              styles.trxAmount,
-                              { color: trx.amount < 0 ? colors.text : '#34C759' },
-                            ]}
-                          >
-                            {trx.amount < 0
-                              ? `-€${Math.abs(trx.amount).toFixed(2)}`
-                              : `+€${trx.amount.toFixed(2)}`}
-                          </Text>
-                          <Ionicons name="chevron-forward" size={14} color={colors.textSecondary} />
-                        </View>
+                        <Text
+                          style={[
+                            styles.segmentText,
+                            { color: colors.textSecondary },
+                            filterMode === 'ALL' && [styles.segmentTextActive, { color: colors.accent }],
+                          ]}
+                        >
+                          All
+                        </Text>
                       </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              )}
-            </ScrollView>
+
+                      <TouchableOpacity
+                        style={[
+                          styles.segmentBtn,
+                          filterMode === 'FIXED' && [styles.segmentBtnActive, { backgroundColor: isDark ? '#3A3A3C' : '#FFFFFF' }],
+                        ]}
+                        onPress={() => setFilterMode('FIXED')}
+                      >
+                        <Text
+                          style={[
+                            styles.segmentText,
+                            { color: colors.textSecondary },
+                            filterMode === 'FIXED' && [styles.segmentTextActive, { color: colors.accent }],
+                          ]}
+                        >
+                          Fixed
+                        </Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={[
+                          styles.segmentBtn,
+                          filterMode === 'FLEXIBLE' && [styles.segmentBtnActive, { backgroundColor: isDark ? '#3A3A3C' : '#FFFFFF' }],
+                        ]}
+                        onPress={() => setFilterMode('FLEXIBLE')}
+                      >
+                        <Text
+                          style={[
+                            styles.segmentText,
+                            { color: colors.textSecondary },
+                            filterMode === 'FLEXIBLE' && [styles.segmentTextActive, { color: colors.accent }],
+                          ]}
+                        >
+                          Flexible
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </>
+                }
+                ListEmptyComponent={
+                  <View style={styles.emptyContainer}>
+                    <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+                      {searchQuery.trim().length > 0
+                        ? `No matches found for "${searchQuery}"`
+                        : `No ${filterMode !== 'ALL' ? filterMode.toLowerCase() : ''} transactions found for this period.`}
+                    </Text>
+                  </View>
+                }
+              />
+            )}
 
             {/* Close Button */}
             <TouchableOpacity
               style={[styles.closeBtn, { backgroundColor: isDark ? '#2C2C2E' : '#F2F2F7' }]}
-              onPress={onClose}
+              onPress={handleDismiss}
             >
               <Text style={[styles.closeBtnText, { color: colors.accent }]}>Close</Text>
             </TouchableOpacity>
-          </KeyboardAvoidingView>
-        </TouchableWithoutFeedback>
-      </TouchableOpacity>
+          </Animated.View>
+        </KeyboardAvoidingView>
+      </View>
     </Modal>
   );
 }
@@ -307,23 +401,30 @@ export function TransactionListModal({
 const styles = StyleSheet.create({
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  keyboardContainer: {
+    width: '100%',
     justifyContent: 'flex-end',
   },
   sheetContainer: {
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
-    padding: 20,
+    paddingHorizontal: 20,
+    paddingTop: 8,
     paddingBottom: 34,
-    maxHeight: '85%',
+    maxHeight: '88%',
     borderWidth: StyleSheet.hairlineWidth,
   },
+  handleContainer: {
+    paddingVertical: 12,
+    alignItems: 'center',
+    width: '100%',
+  },
   sheetHandle: {
-    width: 36,
-    height: 4,
-    borderRadius: 2,
-    marginBottom: 14,
-    alignSelf: 'center',
+    width: 40,
+    height: 5,
+    borderRadius: 2.5,
   },
   headerRow: {
     flexDirection: 'row',
@@ -348,9 +449,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
   },
-  mainScrollView: {
-    flexGrow: 0,
-  },
   summaryCardWrapper: {
     marginBottom: 12,
   },
@@ -374,7 +472,6 @@ const styles = StyleSheet.create({
   clearBtn: {
     padding: 2,
   },
-
   segmentedContainer: {
     flexDirection: 'row',
     borderRadius: 10,
@@ -400,10 +497,6 @@ const styles = StyleSheet.create({
   },
   segmentTextActive: {
     fontWeight: '700',
-  },
-
-  scrollList: {
-    paddingBottom: 8,
   },
   trxRow: {
     flexDirection: 'row',
@@ -468,7 +561,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
   },
-
   emptyContainer: {
     paddingVertical: 32,
     alignItems: 'center',
@@ -477,7 +569,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontStyle: 'italic',
   },
-
   closeBtn: {
     borderRadius: 12,
     paddingVertical: 12,

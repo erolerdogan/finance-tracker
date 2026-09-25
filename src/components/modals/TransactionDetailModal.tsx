@@ -2,9 +2,12 @@ import { getCategoryColor } from '@/constants/colors';
 import { useTheme } from '@/contexts/ThemeContext';
 import { FixedOverrideState, Transaction } from '@/db/database';
 import { Ionicons } from '@expo/vector-icons';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef } from 'react';
 import {
+  Animated,
+  Dimensions,
   Modal,
+  PanResponder,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -12,13 +15,15 @@ import {
   View
 } from 'react-native';
 
+const { height: SCREEN_HEIGHT } = Dimensions.get('window');
+
 interface TransactionDetailModalProps {
   visible: boolean;
   transaction: Transaction | null;
   fixedState: FixedOverrideState;
   parentTitle?: string;
-  onClose: () => void; // Called when clicking Back Button
-  onDismiss?: () => void; // Called when tapping backdrop / dismiss
+  onClose: () => void;
+  onDismiss?: () => void;
   onSelectFixedState: (newState: FixedOverrideState) => void;
 }
 
@@ -28,324 +33,322 @@ export function TransactionDetailModal({
   fixedState,
   parentTitle = 'Back',
   onClose,
+  onDismiss,
   onSelectFixedState,
 }: TransactionDetailModalProps) {
+  const handleDismissAction = onDismiss ?? onClose;
   const { colors, isDark } = useTheme();
-  const [selectedState, setSelectedState] = useState<FixedOverrideState>(fixedState);
+
+  const translateY = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
+  const overlayOpacity = useRef(new Animated.Value(0)).current;
+
+  const handleDismissAnimation = (callback: () => void) => {
+    Animated.parallel([
+      Animated.timing(translateY, {
+        toValue: SCREEN_HEIGHT,
+        duration: 200,
+        useNativeDriver: true,
+      }),
+      Animated.timing(overlayOpacity, {
+        toValue: 0,
+        duration: 180,
+        useNativeDriver: true,
+      }),
+    ]).start(() => {
+      callback();
+    });
+  };
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: (_, gestureState) => gestureState.dy > 5,
+      onPanResponderMove: (_, gestureState) => {
+        if (gestureState.dy > 0) {
+          translateY.setValue(gestureState.dy);
+        }
+      },
+      onPanResponderRelease: (_, gestureState) => {
+        if (gestureState.dy > 100 || gestureState.vy > 0.5) {
+          handleDismissAnimation(handleDismissAction);
+        } else {
+          Animated.spring(translateY, {
+            toValue: 0,
+            useNativeDriver: true,
+            bounciness: 2,
+            speed: 16,
+          }).start();
+        }
+      },
+    })
+  ).current;
 
   useEffect(() => {
     if (visible) {
-      setSelectedState(fixedState);
-    }
-  }, [visible, fixedState]);
+      translateY.setValue(SCREEN_HEIGHT);
+      overlayOpacity.setValue(0);
 
-  const handleSegmentPress = (newState: FixedOverrideState) => {
-    setSelectedState(newState);
-    onSelectFixedState(newState);
-  };
+      Animated.parallel([
+        Animated.timing(overlayOpacity, {
+          toValue: 1,
+          duration: 200,
+          useNativeDriver: true,
+        }),
+        Animated.spring(translateY, {
+          toValue: 0,
+          useNativeDriver: true,
+          bounciness: 3,
+          speed: 14,
+        }),
+      ]).start();
+    }
+  }, [visible]);
+
+  if (!transaction) return null;
+
+  const isIncome = transaction.amount > 0;
+  const formattedAmount = `${isIncome ? '+' : '-'}€${Math.abs(transaction.amount).toFixed(2)}`;
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={onClose}>
-        <TouchableWithoutFeedback>
-          <View
+    <Modal visible={visible} transparent animationType="none" onRequestClose={() => handleDismissAnimation(onDismiss)}>
+      <View style={styles.modalOverlay}>
+        <TouchableWithoutFeedback onPress={() => handleDismissAnimation(onDismiss)}>
+          <Animated.View
             style={[
-              styles.detailCardContainer,
+              StyleSheet.absoluteFill,
               {
-                backgroundColor: isDark ? colors.card : '#FFF',
-                borderColor: colors.border,
+                backgroundColor: 'rgba(0,0,0,0.5)',
+                opacity: overlayOpacity,
               },
             ]}
-          >
-            <View style={[styles.sheetHandle, { backgroundColor: colors.border }]} />
+          />
+        </TouchableWithoutFeedback>
 
-            {/* Restored Header Nav Bar with Back Button */}
-            <View style={styles.headerNavRow}>
+        <Animated.View
+          style={[
+            styles.sheetContainer,
+            {
+              backgroundColor: isDark ? colors.card : colors.background,
+              borderColor: colors.border,
+              transform: [{ translateY }],
+            },
+          ]}
+        >
+          {/* Swipe Drag Handle Area */}
+          <View style={styles.handleContainer} {...panResponder.panHandlers}>
+            <View style={[styles.sheetHandle, { backgroundColor: colors.border }]} />
+          </View>
+
+          {/* Top Bar Navigation */}
+          <View style={styles.navRow}>
+            <TouchableOpacity style={styles.backBtn} onPress={() => handleDismissAnimation(onClose)}>
+              <Ionicons name="chevron-back" size={20} color={colors.accent} />
+              <Text style={[styles.backBtnText, { color: colors.accent }]}>{parentTitle}</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity onPress={() => handleDismissAnimation(onDismiss)}>
+              <Ionicons name="close-circle" size={24} color={colors.textSecondary} />
+            </TouchableOpacity>
+          </View>
+
+          {/* Amount & Merchant Banner */}
+          <View style={styles.merchantHeader}>
+            <Text style={[styles.merchantName, { color: colors.text }]} numberOfLines={2}>
+              {transaction.merchant !== 'Unknown' ? transaction.merchant : transaction.rawDescription}
+            </Text>
+
+            <Text style={[styles.amountText, { color: isIncome ? '#34C759' : colors.text }]}>
+              {formattedAmount}
+            </Text>
+
+            <View style={styles.metaRow}>
+              <View style={[styles.categoryPill, { backgroundColor: getCategoryColor(transaction.category) + '20' }]}>
+                <View style={[styles.dot, { backgroundColor: getCategoryColor(transaction.category) }]} />
+                <Text style={[styles.categoryText, { color: getCategoryColor(transaction.category) }]}>
+                  {transaction.category}
+                </Text>
+              </View>
+              <Text style={[styles.dateText, { color: colors.textSecondary }]}>{transaction.date}</Text>
+            </View>
+          </View>
+
+          {/* Classification Selection */}
+          <View style={[styles.sectionContainer, { backgroundColor: isDark ? '#2C2C2E' : '#F2F2F7' }]}>
+            <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>COST CLASSIFICATION</Text>
+
+            <View style={styles.overrideOptionsRow}>
               <TouchableOpacity
                 style={[
-                  styles.backBtn,
-                  { backgroundColor: isDark ? '#2C2C2E' : '#F2F2F7' },
+                  styles.overrideOption,
+                  fixedState === 'AUTO' && [styles.overrideOptionActive, { backgroundColor: isDark ? '#3A3A3C' : '#FFFFFF' }],
                 ]}
-                activeOpacity={0.7}
-                onPress={onClose}
+                onPress={() => onSelectFixedState('AUTO')}
               >
-                <Ionicons name="chevron-back" size={16} color={colors.accent} />
-                <Text style={[styles.backBtnText, { color: colors.accent }]}>
-                  {parentTitle}
+                <Text style={[styles.optionText, { color: colors.textSecondary }, fixedState === 'AUTO' && { color: colors.accent, fontWeight: '700' }]}>
+                  Auto
                 </Text>
               </TouchableOpacity>
 
-              <Text style={[styles.detailCardTitle, { color: colors.text }]}>
-                Details
-              </Text>
+              <TouchableOpacity
+                style={[
+                  styles.overrideOption,
+                  fixedState === 'FIXED' && [styles.overrideOptionActive, { backgroundColor: isDark ? '#3A3A3C' : '#FFFFFF' }],
+                ]}
+                onPress={() => onSelectFixedState('FIXED')}
+              >
+                <Text style={[styles.optionText, { color: colors.textSecondary }, fixedState === 'FIXED' && { color: '#5856D6', fontWeight: '700' }]}>
+                  Fixed
+                </Text>
+              </TouchableOpacity>
 
-              <View style={styles.headerSpacer} />
+              <TouchableOpacity
+                style={[
+                  styles.overrideOption,
+                  fixedState === 'FLEXIBLE' && [styles.overrideOptionActive, { backgroundColor: isDark ? '#3A3A3C' : '#FFFFFF' }],
+                ]}
+                onPress={() => onSelectFixedState('FLEXIBLE')}
+              >
+                <Text style={[styles.optionText, { color: colors.textSecondary }, fixedState === 'FLEXIBLE' && { color: '#FF9500', fontWeight: '700' }]}>
+                  Flexible
+                </Text>
+              </TouchableOpacity>
             </View>
-
-            {transaction && (
-              <View style={styles.detailContent}>
-                <View style={styles.detailAmountGroup}>
-                  <Text style={[styles.detailAmountLabel, { color: colors.textSecondary }]}>
-                    AMOUNT
-                  </Text>
-                  <Text
-                    style={[
-                      styles.detailAmountValue,
-                      { color: transaction.amount < 0 ? colors.text : '#34C759' },
-                    ]}
-                  >
-                    {transaction.amount < 0
-                      ? `-€${Math.abs(transaction.amount).toFixed(2)}`
-                      : `+€${transaction.amount.toFixed(2)}`}
-                  </Text>
-                </View>
-
-                <View style={styles.detailRow}>
-                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Merchant</Text>
-                  <Text style={[styles.detailValue, { color: colors.text }]}>
-                    {transaction.merchant}
-                  </Text>
-                </View>
-
-                <View style={styles.detailRow}>
-                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>
-                    Full Description
-                  </Text>
-                  <Text style={[styles.detailValueSelectable, { color: colors.text }]} selectable>
-                    {transaction.rawDescription}
-                  </Text>
-                </View>
-
-                <View style={styles.detailRow}>
-                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Date</Text>
-                  <Text style={[styles.detailValue, { color: colors.text }]}>
-                    {transaction.date}
-                  </Text>
-                </View>
-
-                <View style={styles.detailRow}>
-                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Category</Text>
-                  <View style={styles.detailCategoryBadge}>
-                    <View
-                      style={[
-                        styles.colorDot,
-                        { backgroundColor: getCategoryColor(transaction.category) },
-                      ]}
-                    />
-                    <Text style={[styles.detailCategoryText, { color: colors.text }]}>
-                      {transaction.category}
-                    </Text>
-                  </View>
-                </View>
-
-                {/* Classification Segment */}
-                <View
-                  style={[
-                    styles.segmentedContainer,
-                    { backgroundColor: isDark ? '#2C2C2E' : '#F2F2F7' },
-                  ]}
-                >
-                  <Text style={[styles.toggleTitle, { color: colors.text }]}>
-                    Cost Classification
-                  </Text>
-                  <Text style={[styles.toggleSubtitle, { color: colors.textSecondary }]}>
-                    Select how matches for "
-                    {transaction.merchant !== 'Unknown' ? transaction.merchant : 'this item'}" are treated.
-                  </Text>
-
-                  <View
-                    style={[
-                      styles.segmentGroup,
-                      { backgroundColor: isDark ? '#1C1C1E' : '#E5E5EA' },
-                    ]}
-                  >
-                    <TouchableOpacity
-                      style={[
-                        styles.segmentBtn,
-                        selectedState === 'AUTO' && [
-                          styles.segmentBtnActive,
-                          { backgroundColor: isDark ? '#3A3A3C' : '#FFFFFF' },
-                        ],
-                      ]}
-                      onPress={() => handleSegmentPress('AUTO')}
-                    >
-                      <Text
-                        style={[
-                          styles.segmentText,
-                          { color: colors.textSecondary },
-                          selectedState === 'AUTO' && [
-                            styles.segmentTextActive,
-                            { color: colors.accent },
-                          ],
-                        ]}
-                      >
-                        Auto
-                      </Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      style={[
-                        styles.segmentBtn,
-                        selectedState === 'FIXED' && [
-                          styles.segmentBtnActive,
-                          { backgroundColor: isDark ? '#3A3A3C' : '#FFFFFF' },
-                        ],
-                      ]}
-                      onPress={() => handleSegmentPress('FIXED')}
-                    >
-                      <Text
-                        style={[
-                          styles.segmentText,
-                          { color: colors.textSecondary },
-                          selectedState === 'FIXED' && [
-                            styles.segmentTextActive,
-                            { color: colors.accent },
-                          ],
-                        ]}
-                      >
-                        Fixed
-                      </Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      style={[
-                        styles.segmentBtn,
-                        selectedState === 'FLEXIBLE' && [
-                          styles.segmentBtnActive,
-                          { backgroundColor: isDark ? '#3A3A3C' : '#FFFFFF' },
-                        ],
-                      ]}
-                      onPress={() => handleSegmentPress('FLEXIBLE')}
-                    >
-                      <Text
-                        style={[
-                          styles.segmentText,
-                          { color: colors.textSecondary },
-                          selectedState === 'FLEXIBLE' && [
-                            styles.segmentTextActive,
-                            { color: colors.accent },
-                          ],
-                        ]}
-                      >
-                        Flexible
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              </View>
-            )}
-
-            <TouchableOpacity
-              style={[
-                styles.closeDetailButton,
-                { backgroundColor: isDark ? '#2C2C2E' : '#F2F2F7' },
-              ]}
-              onPress={onClose}
-            >
-              <Text style={[styles.closeDetailButtonText, { color: colors.accent }]}>
-                Close
-              </Text>
-            </TouchableOpacity>
           </View>
-        </TouchableWithoutFeedback>
-      </TouchableOpacity>
+
+          {/* Raw Description Info */}
+          <View style={styles.rawDescContainer}>
+            <Text style={[styles.rawDescLabel, { color: colors.textSecondary }]}>RAW DESCRIPTION</Text>
+            <Text style={[styles.rawDescValue, { color: colors.text }]}>{transaction.rawDescription}</Text>
+          </View>
+        </Animated.View>
+      </View>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
-  detailCardContainer: {
+  modalOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  sheetContainer: {
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
-    padding: 20,
+    paddingHorizontal: 20,
+    paddingTop: 8,
     paddingBottom: 34,
     borderWidth: StyleSheet.hairlineWidth,
   },
-  sheetHandle: {
-    width: 36,
-    height: 4,
-    borderRadius: 2,
-    marginBottom: 12,
-    alignSelf: 'center',
-  },
-  headerNavRow: {
-    flexDirection: 'row',
+  handleContainer: {
+    paddingVertical: 10,
     alignItems: 'center',
+    width: '100%',
+  },
+  sheetHandle: {
+    width: 40,
+    height: 5,
+    borderRadius: 2.5,
+  },
+  navRow: {
+    flexDirection: 'row',
     justifyContent: 'space-between',
+    alignItems: 'center',
     marginBottom: 16,
   },
   backBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 12,
-    gap: 2,
   },
   backBtnText: {
-    fontSize: 13,
+    fontSize: 15,
     fontWeight: '600',
+    marginLeft: 2,
   },
-  detailCardTitle: {
-    fontSize: 16,
+  merchantHeader: {
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  merchantName: {
+    fontSize: 18,
     fontWeight: '700',
     textAlign: 'center',
+    marginBottom: 6,
   },
-  headerSpacer: {
-    width: 80,
+  amountText: {
+    fontSize: 28,
+    fontWeight: '800',
+    marginBottom: 10,
   },
-  detailContent: { marginVertical: 4 },
-  detailAmountGroup: { alignItems: 'center', marginBottom: 20 },
-  detailAmountLabel: { fontSize: 10, fontWeight: '700', letterSpacing: 0.5 },
-  detailAmountValue: { fontSize: 26, fontWeight: '800', marginTop: 2 },
-  detailRow: { marginBottom: 14 },
-  detailLabel: { fontSize: 12, fontWeight: '500', marginBottom: 4 },
-  detailValue: { fontSize: 15, fontWeight: '600' },
-  detailValueSelectable: { fontSize: 15, fontWeight: '500', lineHeight: 20 },
-  detailCategoryBadge: { flexDirection: 'row', alignItems: 'center', marginTop: 2 },
-  colorDot: { width: 10, height: 10, borderRadius: 5, marginRight: 8 },
-  detailCategoryText: { fontSize: 14, fontWeight: '600' },
-
-  segmentedContainer: {
-    borderRadius: 12,
-    padding: 12,
-    marginTop: 8,
-    marginBottom: 12,
-  },
-  toggleTitle: { fontSize: 14, fontWeight: '600' },
-  toggleSubtitle: { fontSize: 11, marginTop: 2, marginBottom: 10, lineHeight: 15 },
-  segmentGroup: {
+  metaRow: {
     flexDirection: 'row',
-    borderRadius: 8,
-    padding: 2,
+    alignItems: 'center',
+    gap: 12,
   },
-  segmentBtn: {
+  categoryPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  dot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    marginRight: 6,
+  },
+  categoryText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  dateText: {
+    fontSize: 12,
+  },
+  sectionContainer: {
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 16,
+  },
+  sectionTitle: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    marginBottom: 10,
+  },
+  overrideOptionsRow: {
+    flexDirection: 'row',
+    borderRadius: 10,
+    gap: 4,
+  },
+  overrideOption: {
     flex: 1,
     paddingVertical: 8,
     alignItems: 'center',
-    borderRadius: 6,
+    borderRadius: 8,
   },
-  segmentBtnActive: {
+  overrideOptionActive: {
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.15,
+    shadowOpacity: 0.12,
     shadowRadius: 2,
     elevation: 2,
   },
-  segmentText: {
+  optionText: {
     fontSize: 13,
     fontWeight: '500',
   },
-  segmentTextActive: {
+  rawDescContainer: {
+    paddingHorizontal: 4,
+    marginBottom: 8,
+  },
+  rawDescLabel: {
+    fontSize: 11,
     fontWeight: '700',
+    letterSpacing: 0.5,
+    marginBottom: 4,
   },
-
-  closeDetailButton: {
-    borderRadius: 12,
-    paddingVertical: 12,
-    alignItems: 'center',
-    marginTop: 12,
+  rawDescValue: {
+    fontSize: 13,
+    lineHeight: 18,
   },
-  closeDetailButtonText: { fontSize: 15, fontWeight: '700' },
 });

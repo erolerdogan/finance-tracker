@@ -229,26 +229,53 @@ export async function getFixedVsFlexibleSummary(
     [monthName, profileId]
   );
 
+  // Pre-fetch custom fixed rules once for O(1) synchronous matching
+  const customRules = await db.getAllAsync<{ keyword: string; overrideState: string }>(
+    `SELECT keyword, overrideState FROM fixed_cost_rules WHERE profileId = ?;`,
+    [profileId]
+  );
+
+  const customRuleMap = new Map<string, string>();
+  customRules.forEach((r) => customRuleMap.set(r.keyword.toUpperCase().trim(), r.overrideState));
+
+  const detectedPatterns = await detectRecurringPatterns(db, 2, profileId);
+  const detectedKeywords = detectedPatterns.map((p) => p.merchant.toUpperCase().trim());
+
+  const allFixedKeywords = new Set([
+    ...DEFAULT_FIXED_KEYWORDS.map((k) => k.toUpperCase().trim()),
+    ...detectedKeywords,
+  ]);
+
   let fixedTotal = 0;
   let flexibleTotal = 0;
   let fixedCount = 0;
 
   for (const tx of transactions) {
     const absAmount = Math.abs(tx.amount);
+    let isFixed = false;
+
     if (tx.is_fixed === 1) {
+      isFixed = true;
+    } else if (tx.is_fixed === 0) {
+      isFixed = false;
+    } else {
+      const keyword = (tx.merchant && tx.merchant !== 'Unknown' ? tx.merchant : tx.rawDescription)
+        .toUpperCase()
+        .trim();
+
+      const matchedRule = Array.from(customRuleMap.entries()).find(([kw]) => keyword.includes(kw));
+      if (matchedRule) {
+        isFixed = matchedRule[1] === 'FIXED';
+      } else {
+        isFixed = Array.from(allFixedKeywords).some((kw) => keyword.includes(kw));
+      }
+    }
+
+    if (isFixed) {
       fixedTotal += absAmount;
       fixedCount++;
-    } else if (tx.is_fixed === 0) {
-      flexibleTotal += absAmount;
     } else {
-      const keyword = tx.merchant !== 'Unknown' ? tx.merchant : tx.rawDescription;
-      const isAutoFixed = await isTransactionFixed(db, keyword, profileId);
-      if (isAutoFixed) {
-        fixedTotal += absAmount;
-        fixedCount++;
-      } else {
-        flexibleTotal += absAmount;
-      }
+      flexibleTotal += absAmount;
     }
   }
 
@@ -277,11 +304,24 @@ export async function getCategoryFixedVsFlexibleSummary(
     WHERE profileId = ? AND monthName = ? ${categoryFilter} AND amount < 0;
   `;
 
-  const queryParams = isAll
-    ? [profileId, monthName]
-    : [profileId, monthName, category];
-
+  const queryParams = isAll ? [profileId, monthName] : [profileId, monthName, category];
   const transactions = await db.getAllAsync<Transaction>(query, queryParams);
+
+  const customRules = await db.getAllAsync<{ keyword: string; overrideState: string }>(
+    `SELECT keyword, overrideState FROM fixed_cost_rules WHERE profileId = ?;`,
+    [profileId]
+  );
+
+  const customRuleMap = new Map<string, string>();
+  customRules.forEach((r) => customRuleMap.set(r.keyword.toUpperCase().trim(), r.overrideState));
+
+  const detectedPatterns = await detectRecurringPatterns(db, 2, profileId);
+  const detectedKeywords = detectedPatterns.map((p) => p.merchant.toUpperCase().trim());
+
+  const allFixedKeywords = new Set([
+    ...DEFAULT_FIXED_KEYWORDS.map((k) => k.toUpperCase().trim()),
+    ...detectedKeywords,
+  ]);
 
   let fixedTotal = 0;
   let flexibleTotal = 0;
@@ -289,20 +329,30 @@ export async function getCategoryFixedVsFlexibleSummary(
 
   for (const tx of transactions) {
     const absAmount = Math.abs(tx.amount);
+    let isFixed = false;
+
     if (tx.is_fixed === 1) {
+      isFixed = true;
+    } else if (tx.is_fixed === 0) {
+      isFixed = false;
+    } else {
+      const keyword = (tx.merchant && tx.merchant !== 'Unknown' ? tx.merchant : tx.rawDescription)
+        .toUpperCase()
+        .trim();
+
+      const matchedRule = Array.from(customRuleMap.entries()).find(([kw]) => keyword.includes(kw));
+      if (matchedRule) {
+        isFixed = matchedRule[1] === 'FIXED';
+      } else {
+        isFixed = Array.from(allFixedKeywords).some((kw) => keyword.includes(kw));
+      }
+    }
+
+    if (isFixed) {
       fixedTotal += absAmount;
       fixedCount++;
-    } else if (tx.is_fixed === 0) {
-      flexibleTotal += absAmount;
     } else {
-      const keyword = tx.merchant !== 'Unknown' ? tx.merchant : tx.rawDescription;
-      const isAutoFixed = await isTransactionFixed(db, keyword, profileId);
-      if (isAutoFixed) {
-        fixedTotal += absAmount;
-        fixedCount++;
-      } else {
-        flexibleTotal += absAmount;
-      }
+      flexibleTotal += absAmount;
     }
   }
 
@@ -315,6 +365,70 @@ export async function getCategoryFixedVsFlexibleSummary(
     flexiblePercentage: grandTotal > 0 ? (flexibleTotal / grandTotal) * 100 : 0,
     fixedItemsCount: fixedCount,
   };
+}
+
+export async function getFixedOrFlexibleTransactions(
+  db: SQLiteDatabase,
+  monthName: string,
+  isFixedTarget: boolean,
+  profileId: number
+): Promise<Transaction[]> {
+  const allExpenses = await db.getAllAsync<Transaction>(
+    `SELECT * FROM transactions 
+     WHERE monthName = ? 
+       AND amount < 0 
+       AND profileId = ?
+     ORDER BY ABS(amount) DESC;`,
+    [monthName, profileId]
+  );
+
+  const customRules = await db.getAllAsync<{ keyword: string; overrideState: string }>(
+    `SELECT keyword, overrideState FROM fixed_cost_rules WHERE profileId = ?;`,
+    [profileId]
+  );
+
+  const customRuleMap = new Map<string, string>();
+  customRules.forEach((r) => customRuleMap.set(r.keyword.toUpperCase().trim(), r.overrideState));
+
+  const detectedPatterns = await detectRecurringPatterns(db, 2, profileId);
+  const detectedKeywords = detectedPatterns.map((p) => p.merchant.toUpperCase().trim());
+
+  const allFixedKeywords = new Set([
+    ...DEFAULT_FIXED_KEYWORDS.map((k) => k.toUpperCase().trim()),
+    ...detectedKeywords,
+  ]);
+
+  const filteredItems: Transaction[] = [];
+
+  for (const tx of allExpenses) {
+    let isFixed = false;
+
+    if (tx.is_fixed === 1) {
+      isFixed = true;
+    } else if (tx.is_fixed === 0) {
+      isFixed = false;
+    } else {
+      const keyword = (tx.merchant && tx.merchant !== 'Unknown' ? tx.merchant : tx.rawDescription)
+        .toUpperCase()
+        .trim();
+
+      const matchedRule = Array.from(customRuleMap.entries()).find(([kw]) => keyword.includes(kw));
+      if (matchedRule) {
+        isFixed = matchedRule[1] === 'FIXED';
+      } else {
+        isFixed = Array.from(allFixedKeywords).some((kw) => keyword.includes(kw));
+      }
+    }
+
+    // Attach resolved status onto transaction object for downstream list filters
+    tx.is_fixed = isFixed ? 1 : 0;
+
+    if (isFixedTarget === isFixed) {
+      filteredItems.push(tx);
+    }
+  }
+
+  return filteredItems;
 }
 
 export async function getCategoryGoalsWithProgress(
@@ -530,9 +644,50 @@ export async function getFilteredTransactions(
   }
 
   query += ` ORDER BY date DESC, id DESC;`;
-  return await db.getAllAsync<Transaction>(query, params);
-}
+  const transactions = await db.getAllAsync<Transaction>(query, params);
 
+  // Pre-fetch custom rules O(1) once per request
+  const customRules = await db.getAllAsync<{ keyword: string; overrideState: string }>(
+    `SELECT keyword, overrideState FROM fixed_cost_rules WHERE profileId = ?;`,
+    [profileId]
+  );
+  const customRuleMap = new Map<string, string>();
+  customRules.forEach((r) => customRuleMap.set(r.keyword.toUpperCase().trim(), r.overrideState));
+
+  const detectedPatterns = await detectRecurringPatterns(db, 2, profileId);
+  const detectedKeywords = detectedPatterns.map((p) => p.merchant.toUpperCase().trim());
+  const allFixedKeywords = new Set([
+    ...DEFAULT_FIXED_KEYWORDS.map((k) => k.toUpperCase().trim()),
+    ...detectedKeywords,
+  ]);
+
+  // Tag every transaction (both Income and Expense) with an explicit 1 or 0 for is_fixed
+  return transactions.map((tx) => {
+    let isFixed = false;
+
+    if (tx.is_fixed === 1) {
+      isFixed = true;
+    } else if (tx.is_fixed === 0) {
+      isFixed = false;
+    } else {
+      const keyword = (tx.merchant && tx.merchant !== 'Unknown' ? tx.merchant : tx.rawDescription)
+        .toUpperCase()
+        .trim();
+
+      const matchedRule = Array.from(customRuleMap.entries()).find(([kw]) => keyword.includes(kw));
+      if (matchedRule) {
+        isFixed = matchedRule[1] === 'FIXED';
+      } else {
+        isFixed = Array.from(allFixedKeywords).some((kw) => keyword.includes(kw));
+      }
+    }
+
+    return {
+      ...tx,
+      is_fixed: isFixed ? 1 : 0,
+    };
+  });
+}
 export async function getTransactionsByMonth(
   db: SQLiteDatabase,
   monthName: string,
@@ -913,45 +1068,7 @@ export async function toggleFixedCostRule(
   return newState === 'FIXED';
 }
 
-export async function getFixedOrFlexibleTransactions(
-  db: SQLiteDatabase,
-  monthName: string,
-  isFixed: boolean,
-  profileId: number
-): Promise<Transaction[]> {
-  const allExpenses = await db.getAllAsync<Transaction>(
-    `SELECT * FROM transactions 
-     WHERE monthName = ? 
-       AND amount < 0 
-       AND profileId = ?
-     ORDER BY ABS(amount) DESC;`,
-    [monthName, profileId]
-  );
 
-  const filteredItems: Transaction[] = [];
-
-  for (const tx of allExpenses) {
-    if (isFixed) {
-      if (tx.is_fixed === 1) {
-        filteredItems.push(tx);
-      } else if (tx.is_fixed === null || tx.is_fixed === undefined) {
-        const keyword = tx.merchant !== 'Unknown' ? tx.merchant : tx.rawDescription;
-        const isAutoFixed = await isTransactionFixed(db, keyword, profileId);
-        if (isAutoFixed) filteredItems.push(tx);
-      }
-    } else {
-      if (tx.is_fixed === 0) {
-        filteredItems.push(tx);
-      } else if (tx.is_fixed === null || tx.is_fixed === undefined) {
-        const keyword = tx.merchant !== 'Unknown' ? tx.merchant : tx.rawDescription;
-        const isAutoFixed = await isTransactionFixed(db, keyword, profileId);
-        if (!isAutoFixed) filteredItems.push(tx);
-      }
-    }
-  }
-
-  return filteredItems;
-}
 
 export interface RecurringCandidate {
   merchant: string;
@@ -1044,4 +1161,72 @@ export async function getAnnualTrendWithBudget(
     totalAmount: spendingMap[m] || 0,
     budgetLimit: budgetLimit,
   }));
+}
+
+export async function getIncomeFixedVsFlexibleSummary(
+  db: SQLiteDatabase,
+  monthName: string,
+  profileId: number
+): Promise<FixedCostSummary> {
+  const transactions = await db.getAllAsync<Transaction>(
+    `SELECT * FROM transactions WHERE monthName = ? AND profileId = ? AND amount > 0;`,
+    [monthName, profileId]
+  );
+
+  const customRules = await db.getAllAsync<{ keyword: string; overrideState: string }>(
+    `SELECT keyword, overrideState FROM fixed_cost_rules WHERE profileId = ?;`,
+    [profileId]
+  );
+  const customRuleMap = new Map<string, string>();
+  customRules.forEach((r) => customRuleMap.set(r.keyword.toUpperCase().trim(), r.overrideState));
+
+  const detectedPatterns = await detectRecurringPatterns(db, 2, profileId);
+  const detectedKeywords = detectedPatterns.map((p) => p.merchant.toUpperCase().trim());
+  const allFixedKeywords = new Set([
+    ...DEFAULT_FIXED_KEYWORDS.map((k) => k.toUpperCase().trim()),
+    ...detectedKeywords,
+  ]);
+
+  let fixedTotal = 0;
+  let flexibleTotal = 0;
+  let fixedCount = 0;
+
+  for (const tx of transactions) {
+    const absAmount = Math.abs(tx.amount);
+    let isFixed = false;
+
+    if (tx.is_fixed === 1) {
+      isFixed = true;
+    } else if (tx.is_fixed === 0) {
+      isFixed = false;
+    } else {
+      const keyword = (tx.merchant && tx.merchant !== 'Unknown' ? tx.merchant : tx.rawDescription)
+        .toUpperCase()
+        .trim();
+
+      const matchedRule = Array.from(customRuleMap.entries()).find(([kw]) => keyword.includes(kw));
+      if (matchedRule) {
+        isFixed = matchedRule[1] === 'FIXED';
+      } else {
+        isFixed = Array.from(allFixedKeywords).some((kw) => keyword.includes(kw));
+      }
+    }
+
+    if (isFixed) {
+      fixedTotal += absAmount;
+      fixedCount++;
+    } else {
+      flexibleTotal += absAmount;
+    }
+  }
+
+  const grandTotal = fixedTotal + flexibleTotal;
+
+  return {
+    fixedTotal,
+    flexibleTotal,
+    fixedPercentage: grandTotal > 0 ? (fixedTotal / grandTotal) * 100 : 0,
+    flexiblePercentage: grandTotal > 0 ? (flexibleTotal / grandTotal) * 100 : 0,
+    fixedItemsCount: fixedCount,
+  };
 }

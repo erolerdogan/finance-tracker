@@ -12,12 +12,10 @@ import {
   getAvailableMonths,
   getFilteredTransactions,
   getFixedOrFlexibleTransactions,
-  getFixedVsFlexibleSummary,
-  getMonthlyCategoryTotals,
+  getFixedVsFlexibleSummary, getIncomeFixedVsFlexibleSummary, getMonthlyCategoryTotals,
   getMonthlySummary,
   getTransactionFixedState,
-  getTransactionsByMonthAndCategory,
-  MonthlySummary,
+  getTransactionsByMonthAndCategory, MonthlySummary,
   setMerchantFixedOverride,
   Transaction
 } from '@/db/database';
@@ -101,6 +99,15 @@ export default function DashboardScreen() {
   });
 
   // Dashboard Data
+
+  const [incomeSummary, setIncomeSummary] = useState<FixedCostSummary>({
+    fixedTotal: 0,
+    flexibleTotal: 0,
+    fixedPercentage: 0,
+    flexiblePercentage: 0,
+    fixedItemsCount: 0,
+  });
+  
   const [summary, setSummary] = useState<MonthlySummary>({
     totalIncome: 0,
     totalExpenses: 0,
@@ -151,19 +158,21 @@ export default function DashboardScreen() {
         setSelectedMonth(activeMonth);
       }
 
-      const [summaryRes, categoryRes, fixedRes, dateRangeRes] = await Promise.all([
+      const [summaryRes, categoryRes, fixedRes, incomeFixedRes, dateRangeRes] = await Promise.all([
         getMonthlySummary(db, activeMonth, activeProfileId),
         getMonthlyCategoryTotals(db, activeMonth, activeProfileId),
         getFixedVsFlexibleSummary(db, activeMonth, activeProfileId),
+        getIncomeFixedVsFlexibleSummary(db, activeMonth, activeProfileId),
         db.getFirstAsync<{ minDate: string; maxDate: string }>(
           `SELECT MIN(date) as minDate, MAX(date) as maxDate FROM transactions WHERE monthName = ? AND profileId = ?;`,
           [activeMonth, activeProfileId]
         ),
       ]);
-
+      
       setSummary(summaryRes);
       setCategoryData(categoryRes || []);
       setFixedSummary(fixedRes);
+      setIncomeSummary(incomeFixedRes);
 
       if (!dateRangeRes || !dateRangeRes.minDate) {
         setCoverageStatus({ status: 'EMPTY', label: 'Statement Pending' });
@@ -284,15 +293,16 @@ export default function DashboardScreen() {
 
   const handleSelectFixedState = async (newState: FixedOverrideState) => {
     if (!db || !selectedTransaction) return;
-
+  
     setCurrentFixedState(newState);
-
+  
     const keyword =
       selectedTransaction.merchant !== 'Unknown'
         ? selectedTransaction.merchant
         : selectedTransaction.rawDescription;
-
+  
     try {
+      // 1. Update DB rule & transaction overrides
       await setMerchantFixedOverride(
         db,
         keyword,
@@ -300,12 +310,51 @@ export default function DashboardScreen() {
         newState,
         activeProfileId
       );
-
+  
+      // 2. Derive updated numeric is_fixed value (1 for FIXED, 0 for FLEXIBLE, NULL for AUTO)
+      let updatedIsFixedVal: number | null = null;
+      if (newState === 'FIXED') updatedIsFixedVal = 1;
+      if (newState === 'FLEXIBLE') updatedIsFixedVal = 0;
+  
+      // 3. Update currently open selectedTransaction state
+      setSelectedTransaction((prev) =>
+        prev
+          ? {
+              ...prev,
+              is_fixed: updatedIsFixedVal,
+            }
+          : null
+      );
+  
+      // 4. Update the list modal transactions state so list tags update instantly
+      setListModalTransactions((prevList) =>
+        prevList.map((tx) => {
+          const txKeyword =
+            tx.merchant !== 'Unknown' ? tx.merchant : tx.rawDescription;
+          if (
+            txKeyword.toUpperCase().trim() === keyword.toUpperCase().trim()
+          ) {
+            return {
+              ...tx,
+              is_fixed: updatedIsFixedVal,
+            };
+          }
+          return tx;
+        })
+      );
+  
+      // 5. Refresh category drill-down list if open
       if (selectedBarCategory) {
-        const updatedItems = await getTransactionsByMonthAndCategory(db, selectedMonth, selectedBarCategory, activeProfileId);
+        const updatedItems = await getTransactionsByMonthAndCategory(
+          db,
+          selectedMonth,
+          selectedBarCategory,
+          activeProfileId
+        );
         setSelectedCategoryTransactions(updatedItems || []);
       }
-
+  
+      // 6. Reload overall dashboard metrics & summary cards
       await loadDashboardData();
     } catch (error) {
       console.error('Failed to update fixed state override:', error);
@@ -455,7 +504,7 @@ export default function DashboardScreen() {
           monthNames={MONTH_NAMES}
           transactions={listModalTransactions}
           loading={loadingListModal}
-          fixedSummary={fixedSummary}
+          fixedSummary={listModalType === 'INCOME' ? incomeSummary : fixedSummary}
           onClose={() => setListModalVisible(false)}
           onSelectTransaction={handleSelectFromFlatList}
         />
