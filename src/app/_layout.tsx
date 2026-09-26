@@ -1,3 +1,4 @@
+import { ProfileProvider } from '@/contexts/ProfileContext';
 import { ThemeProvider } from '@/contexts/ThemeContext';
 import { initDatabase } from '@/db/database';
 import { requestAndScheduleImportReminders } from '@/utils/notifications';
@@ -5,7 +6,6 @@ import { Stack } from 'expo-router';
 import { SQLiteProvider, useSQLiteContext } from 'expo-sqlite';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, View } from 'react-native';
-
 function AppInitializer() {
   const db = useSQLiteContext();
   const [isReady, setIsReady] = useState(false);
@@ -62,10 +62,12 @@ function AppInitializer() {
 
 export default function RootLayout() {
   return (
-    <ThemeProvider>
-      <SQLiteProvider databaseName="fintrack.db">
-        <AppInitializer />
-      </SQLiteProvider>
-    </ThemeProvider>
+    <SQLiteProvider databaseName="financial_aid.db" onInit={initDatabase}>
+      <ThemeProvider>
+        <ProfileProvider>
+          <Stack screenOptions={{ headerShown: false }} />
+        </ProfileProvider>
+      </ThemeProvider>
+    </SQLiteProvider>
   );
 }

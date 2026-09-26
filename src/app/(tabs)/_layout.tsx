@@ -1,14 +1,18 @@
-import { ProfileProvider } from '@/contexts/ProfileContext';
+import { DemoBanner } from '@/components/DemoBanner';
 import { useTheme } from '@/contexts/ThemeContext';
 import { Ionicons } from '@expo/vector-icons';
 import { Tabs } from 'expo-router';
 import React from 'react';
+import { StyleSheet, View } from 'react-native';
 
 export default function TabLayout() {
-  const { colors, isDark } = useTheme();
+  const { colors } = useTheme();
 
   return (
-    <ProfileProvider>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
+      {/* Global Demo Banner pinned above all tabs */}
+      <DemoBanner />
+
       <Tabs
         screenOptions={{
           headerShown: false,
@@ -53,6 +57,12 @@ export default function TabLayout() {
           }}
         />
       </Tabs>
-    </ProfileProvider>
+    </View>
   );
 }
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+  },
+});

@@ -1,85 +1,94 @@
 import { useProfile } from '@/contexts/ProfileContext';
+import { useTheme } from '@/contexts/ThemeContext';
 import { clearAllData } from '@/db/database';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import * as Haptics from 'expo-haptics';
+import { router } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
 import React from 'react';
-import { Alert, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 export function DemoBanner() {
-  const router = useRouter();
-  const db = useSQLiteContext();
   const { isDemoMode, setIsDemoMode, activeProfile, refreshProfiles } = useProfile();
+  const { colors, isDark } = useTheme();
+  const db = useSQLiteContext();
+  const activeProfileId = activeProfile?.id ?? 1;
 
+  // If not in demo mode, render nothing
   if (!isDemoMode) return null;
 
-  const handleEndDemo = () => {
-    Alert.alert(
-      'Exit Demo Workspace?',
-      'This will clear demo transactions and return you to the welcome screen.',
-      [
-        { text: 'Keep Exploring', style: 'cancel' },
-        {
-          text: 'Exit & Import Data',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              if (db && activeProfile?.id) {
-                await clearAllData(db, activeProfile.id);
-              }
-              // 1. Update demo mode and profile state
-              setIsDemoMode(false);
-              
-              // 2. Force immediate imperative navigation without waiting for hanging loaders
-              router.replace('/welcome');
-            } catch (err) {
-              console.error('Failed to end demo mode:', err);
-              // Fallback force navigation even if database clear throws
-              router.replace('/welcome');
-            }
-          },
-        },
-      ]
-    );
+  const handleEndDemo = async () => {
+    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    try {
+      if (db) {
+        await clearAllData(db, activeProfileId);
+      }
+      setIsDemoMode(false);
+      await refreshProfiles();
+      router.replace('/welcome');
+    } catch (err) {
+      console.error('Failed to end demo mode:', err);
+      router.replace('/welcome');
+    }
   };
 
   return (
-    <View style={styles.bannerContainer}>
+    <View 
+      style={[
+        styles.banner, 
+        { 
+          backgroundColor: isDark ? 'rgba(10, 132, 255, 0.15)' : 'rgba(0, 122, 255, 0.1)', 
+          borderColor: colors.accent + '44' 
+        }
+      ]}
+    >
       <View style={styles.leftContent}>
-        <Ionicons name="sparkles" size={14} color="#FF9500" />
-        <Text style={styles.bannerText}>Demo Workspace Active</Text>
+        <Ionicons name="sparkles" size={16} color={colors.accent} />
+        <Text style={[styles.bannerText, { color: colors.text }]}>
+          Demo Workspace Active
+        </Text>
       </View>
-      <TouchableOpacity style={styles.exitBtn} onPress={handleEndDemo} activeOpacity={0.8}>
-        <Text style={styles.exitBtnText}>End Demo</Text>
-        <Ionicons name="exit-outline" size={13} color="#FFFFFF" />
+      <TouchableOpacity 
+        style={[styles.exitButton, { backgroundColor: colors.accent }]} 
+        onPress={handleEndDemo}
+        activeOpacity={0.8}
+      >
+        <Text style={styles.exitButtonText}>Exit Demo</Text>
       </TouchableOpacity>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  bannerContainer: {
+  banner: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#FFF8ED',
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: '#FFE0B2',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 10,
-    marginBottom: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginHorizontal: 16,
+    marginTop: 12,
+    marginBottom: 8,
   },
-  leftContent: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  bannerText: { fontSize: 12, fontWeight: '700', color: '#CC7A00' },
-  exitBtn: {
+  leftContent: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    backgroundColor: '#FF9500',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
+    gap: 8,
   },
-  exitBtnText: { fontSize: 11, fontWeight: '700', color: '#FFFFFF' },
+  bannerText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  exitButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  exitButtonText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
 });

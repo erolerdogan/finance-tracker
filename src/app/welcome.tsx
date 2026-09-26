@@ -1,15 +1,17 @@
 import { useProfile } from '@/contexts/ProfileContext';
 import { useTheme } from '@/contexts/ThemeContext';
+import { processBatchImport } from '@/services/importService';
+import { parseCSVContent, parseExcelContent } from '@/utils/parser';
 import { generateSampleData } from '@/utils/sampleData';
 import { Ionicons } from '@expo/vector-icons';
+import * as DocumentPicker from 'expo-document-picker';
+import { File } from 'expo-file-system';
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import { useSQLiteContext } from 'expo-sqlite';
-import React from 'react';
-import { Dimensions, SafeAreaView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-
-const { width } = Dimensions.get('window');
+import React, { useState } from 'react';
+import { ActivityIndicator, Alert, SafeAreaView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 export default function WelcomeScreen() {
   const db = useSQLiteContext();
@@ -17,9 +19,65 @@ export default function WelcomeScreen() {
   const { colors, isDark } = useTheme();
   const activeProfileId = activeProfile?.id ?? 1;
 
-  const handleImport = async () => {
-    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    router.push('/settings');
+  const [importing, setImporting] = useState(false);
+
+  const handleImportDocument = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: [
+          'text/csv',
+          'text/comma-separated-values',
+          'application/csv',
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'application/vnd.ms-excel',
+          '*/*',
+        ],
+        copyToCacheDirectory: true,
+      });
+
+      if (result.canceled || !result.assets || result.assets.length === 0) {
+        return;
+      }
+
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      setImporting(true);
+
+      const asset = result.assets[0];
+      const fileUri = asset.uri;
+      const fileName = (asset.name || '').toLowerCase();
+
+      let parsedTransactions = [];
+      const file = new File(fileUri);
+
+      // Exactly matches settings.tsx file parsing logic
+      if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
+        const arrayBuffer = await file.arrayBuffer();
+        parsedTransactions = parseExcelContent(arrayBuffer);
+      } else {
+        const csvText = await file.text();
+        parsedTransactions = parseCSVContent(csvText);
+      }
+
+      if (!parsedTransactions || parsedTransactions.length === 0) {
+        Alert.alert('Import Warning', 'No valid transactions found in file.');
+        setImporting(false);
+        return;
+      }
+
+      if (db) {
+        // Execute batch deduplication import
+        const summary = await processBatchImport(db, parsedTransactions, activeProfileId);
+        
+        // Refresh app state and jump straight into the dashboard tabs
+        await refreshProfiles();
+        router.replace('/(tabs)');
+      }
+    } catch (error: any) {
+      console.error('Welcome Import Error:', error);
+      Alert.alert('Import Failed', error?.message || 'An error occurred during import.');
+    } finally {
+      setImporting(false);
+    }
   };
 
   const handleDemoMode = async () => {
@@ -32,8 +90,7 @@ export default function WelcomeScreen() {
     }
   };
 
-    // Dynamic gradient colors based on light/dark theme preference
-    const gradientColors = isDark 
+  const gradientColors = isDark 
     ? (['#0F172A', '#1E1B4B', '#09090B'] as readonly [string, string, ...string[]])
     : (['#F8FAFC', '#E2E8F0', '#CBD5E1'] as readonly [string, string, ...string[]]);
 
@@ -41,7 +98,7 @@ export default function WelcomeScreen() {
     <LinearGradient colors={gradientColors} style={styles.container}>
       <SafeAreaView style={styles.safeArea}>
         
-        {/* Future Media / GIF / Wallpaper Slot */}
+        {/* Visual Hero / Brand Icon Slot */}
         <View style={styles.heroSlot}>
           <View style={[styles.iconGlowRing, { borderColor: colors.accent + '33' }]}>
             <View style={[styles.iconContainer, { backgroundColor: colors.card }]}>
@@ -55,7 +112,7 @@ export default function WelcomeScreen() {
           </View>
         </View>
 
-        {/* Hero Copywriting Header */}
+        {/* Copywriting Header */}
         <View style={styles.header}>
           <Text style={[styles.title, { color: colors.text }]}>
             Your Wealth,{'\n'}Your Device.
@@ -65,19 +122,26 @@ export default function WelcomeScreen() {
           </Text>
         </View>
 
-        {/* Action Buttons with Glassmorphic Card Wrappers */}
+        {/* Action Buttons */}
         <View style={styles.actionContainer}>
           <TouchableOpacity 
             style={[styles.primaryButton, { backgroundColor: colors.accent, shadowColor: colors.accent }]} 
-            onPress={handleImport} 
+            onPress={handleImportDocument} 
             activeOpacity={0.85}
+            disabled={importing}
           >
-            <Ionicons name="document-text-outline" size={20} color="#FFFFFF" style={styles.buttonIcon} />
+            {importing ? (
+              <ActivityIndicator size="small" color="#FFFFFF" style={styles.buttonIcon} />
+            ) : (
+              <Ionicons name="document-text-outline" size={20} color="#FFFFFF" style={styles.buttonIcon} />
+            )}
             <View style={styles.buttonTextWrapper}>
-              <Text style={styles.primaryButtonText}>Import Bank Statement</Text>
+              <Text style={styles.primaryButtonText}>
+                {importing ? 'Processing Statement...' : 'Import Bank Statement'}
+              </Text>
               <Text style={styles.buttonSubtext}>CSV or XLSX file format</Text>
             </View>
-            <Ionicons name="chevron-forward" size={18} color="rgba(255,255,255,0.7)" />
+            {!importing && <Ionicons name="chevron-forward" size={18} color="rgba(255,255,255,0.7)" />}
           </TouchableOpacity>
 
           <TouchableOpacity 
@@ -90,6 +154,7 @@ export default function WelcomeScreen() {
             ]} 
             onPress={handleDemoMode} 
             activeOpacity={0.85}
+            disabled={importing}
           >
             <Ionicons name="sparkles-outline" size={20} color={colors.accent} style={styles.buttonIcon} />
             <View style={styles.buttonTextWrapper}>
@@ -108,9 +173,7 @@ export default function WelcomeScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
+  container: { flex: 1 },
   safeArea: {
     flex: 1,
     justifyContent: 'space-between',

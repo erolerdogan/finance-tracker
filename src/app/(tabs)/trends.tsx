@@ -355,6 +355,7 @@ const chartData = React.useMemo(() => {
   return (
 <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]} edges={['top']}>
       <View style={[styles.container, { backgroundColor: colors.background }]}>
+      <DemoBanner />
         <ScrollView
           style={{ flex: 1 }}
           contentContainerStyle={styles.content}

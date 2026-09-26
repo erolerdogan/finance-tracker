@@ -345,3 +345,21 @@ export function parseCSVContent(
 
   return parseMatrixData(parsed.data || [], customRules);
 }
+
+import * as FileSystem from 'expo-file-system';
+
+export async function parseStatementFile(fileUri: string, customRules = []) {
+  const extension = fileUri.split('.').pop()?.toLowerCase();
+
+  if (extension === 'xlsx' || extension === 'xls') {
+    const base64Data = await FileSystem.readAsStringAsync(fileUri, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+    return parseExcelContent(base64Data, customRules);
+  } else {
+    const csvText = await FileSystem.readAsStringAsync(fileUri, {
+      encoding: FileSystem.EncodingType.UTF8,
+    });
+    return parseCSVContent(csvText, customRules);
+  }
+}

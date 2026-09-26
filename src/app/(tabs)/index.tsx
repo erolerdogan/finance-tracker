@@ -418,9 +418,9 @@ export default function DashboardScreen() {
   const totalTransactions = categoryData.reduce((a, b) => a + (b.count || 0), 0);
 
   return (
-    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]} edges={['top']}>
+<SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]} edges={['top']}>
       <View style={{ flex: 1, backgroundColor: colors.background }}>
-        <ScrollView
+      <ScrollView
           style={[styles.container, { backgroundColor: colors.background }]}
           contentContainerStyle={styles.content}
           refreshControl={
@@ -431,7 +431,9 @@ export default function DashboardScreen() {
             />
           }
         >
-          {/* Conditional Empty State / Welcome Onboarding View */}
+
+
+          {/* 2. Conditional Empty State / Welcome Onboarding View */}
           {availableMonths.length === 0 && !isDemoMode ? (
             <View style={styles.welcomeContainer}>
               <View style={styles.welcomeHeader}>
@@ -474,37 +476,38 @@ export default function DashboardScreen() {
                 </TouchableOpacity>
               </View>
             </View>
-          ) : (
-            <>
-              {/* Demo Workspace Banner */}
-              <DemoBanner />
+) : (
+  <>
+    {/* Universal Demo Workspace Banner - Placed right at the top of active overview */}
+    <DemoBanner />
 
-              {/* Top Header Bar */}
-              <View style={styles.headerRow}>
-                <Text style={[styles.headerTitle, { color: colors.text }]}>Overview</Text>
+    {/* Top Header Bar */}
+    <View style={styles.headerRow}>
+      <Text style={[styles.headerTitle, { color: colors.text }]}>Overview</Text>
 
-                <TouchableOpacity
-                  style={[
-                    styles.settingsHeaderBtn,
-                    { backgroundColor: colors.card, borderColor: colors.border },
-                  ]}
-                  activeOpacity={0.8}
-                  onPress={() => router.push('/settings')}
-                >
-                  <Ionicons name="settings-outline" size={20} color={colors.text} />
-                </TouchableOpacity>
-              </View>
+      <TouchableOpacity
+        style={[
+          styles.settingsHeaderBtn,
+          { backgroundColor: colors.card, borderColor: colors.border },
+        ]}
+        activeOpacity={0.8}
+        onPress={() => router.push('/settings')}
+      >
+        <Ionicons name="settings-outline" size={20} color={colors.text} />
+      </TouchableOpacity>
+    </View>
 
-              {/* Month Stepper Navigation */}
-              <MonthStepper
-                selectedMonth={selectedMonth}
-                availableMonths={availableMonths}
-                monthNames={MONTH_NAMES}
-                coverageStatus={coverageStatus}
-                onPrevMonth={handlePrevMonth}
-                onNextMonth={handleNextMonth}
-                onOpenMonthPicker={() => setMonthPickerVisible(true)}
-              />
+    {/* Month Stepper Navigation */}
+    <MonthStepper
+      selectedMonth={selectedMonth}
+      availableMonths={availableMonths}
+      monthNames={MONTH_NAMES}
+      coverageStatus={coverageStatus}
+      onPrevMonth={handlePrevMonth}
+      onNextMonth={handleNextMonth}
+      onOpenMonthPicker={() => setMonthPickerVisible(true)}
+    />
+    {/* ... Rest of your dashboard components */}
 
               {/* Hero Summary Cards */}
               <SummaryCards
